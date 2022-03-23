@@ -1,5 +1,6 @@
 from obspy.clients.seedlink.easyseedlink import create_client
 from obspy.realtime import RtTrace
+from obspy.signal.trigger import trigger_onset
 from collections import deque
 import numpy as np
 import matplotlib.pyplot as plt
@@ -9,19 +10,24 @@ fig, axs = plt.subplots(2)
 # derived from SC3's scautopick default config
 sta_window = 2 # seconds
 lta_window = 10 #80
-ratio_window = 120
+ratio_window = 120 # must be > lta_window
 thres_on = 3
 thres_off = 1.5
+sensor_freq=100 # RS4D has 100Hz sensor
+max_evt_len = 80*sensor_freq # Check longest possible event occurence (in sec)
 
 rt_trace = RtTrace(max_length=ratio_window)
 
-ratio = np.zeros(ratio_window*100) # assume 100Hz
+ratio = np.zeros(ratio_window*sensor_freq)
+pick_pairs_ind = np.empty((0,2), int) # len is determined by diff of first & last
+                              # elem should be within ratio_window*sensor_freq
 
 def append_trace_to_realtime(tr):
     global ratio
+    global pick_pairs_ind
 
-    print("Appending the following trace:")
-    print(tr)
+    #print("Appending the following trace:")
+    #print(tr)
     rt_trace.append(tr)
 
     print("RtTrace:")
@@ -32,6 +38,50 @@ def append_trace_to_realtime(tr):
     len_new_samples = len(tr.data)
     ratio = np.roll(ratio,-len_new_samples)
     ratio[-len_new_samples:] = sta_lta[-len_new_samples:]
+
+    if len(pick_pairs_ind) > 0:
+        pick_pairs_ind = pick_pairs_ind - len_new_samples # shift indices
+        pick_pairs_ind = pick_pairs_ind[(pick_pairs_ind>0).all(axis=1)] # remove negative indices
+
+    print("Getting trigger times")
+    # What happens if an event window is split between two batches?
+        # tOff is taken to be at the last sample of the array.
+
+    # get part of sta/lta data that may contain tOn,tOff pair
+    # edge case is when a tOff is detected at first sample of new_samples
+    new_sta_lta_left_buffered = ratio[-(max_evt_len + len_new_samples):]
+    pick_pairs_ind_tmp = trigger_onset(new_sta_lta_left_buffered,
+                        thres_on, thres_off, max_len=max_evt_len)
+
+    if len(pick_pairs_ind_tmp) >0:
+        print("temp picks")
+        print(np.diff(pick_pairs_ind_tmp, axis = 1))
+    else:
+        print("temp picks")
+        print("[]")
+
+    # handle re-detected pairs
+    last_sample_ind = len(new_sta_lta_left_buffered)-1
+    for pair_ind in pick_pairs_ind_tmp:
+        # skip if tOff was only considered bc its the end of batch
+            # and not because it's actually <thres_off
+        if pair_ind[1] == last_sample_ind:
+            continue
+
+        elif new_sta_lta_left_buffered[pair_ind[1]]+1 > thres_off:
+            # convert ind_tmp to ind on ratio
+            pair_ind = pair_ind + len(ratio)- len(new_sta_lta_left_buffered)
+
+            if len(pick_pairs_ind) == 0:
+                pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
+                continue
+
+            # check if pair is already recorded
+            if not (pick_pairs_ind == pair_ind).all(axis=1).any():
+                pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
+
+    print("Pick pairs len:")
+    print(len(pick_pairs_ind))
 
     print()
 
