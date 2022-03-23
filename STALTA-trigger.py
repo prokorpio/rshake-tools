@@ -25,25 +25,21 @@ def append_trace_to_realtime(tr):
     print(tr)
     rt_trace.append(tr)
 
-
     print("RtTrace:")
     print(rt_trace)
 
     print("Calculating STA/LTA")
     sta_lta = rt_trace.copy().trigger("recstalta", sta=sta_window, lta=lta_window)
-    for sample in sta_lta.data:
-        ratio = np.roll(ratio,-1)        #ratio.popleft()
-        ratio[-1] = sample        #ratio.append(sample)
+    len_new_samples = len(tr.data)
+    ratio = np.roll(ratio,-len_new_samples)
+    ratio[-len_new_samples:] = sta_lta[-len_new_samples:]
+
     print()
 
     plt.plot(ratio)
     plt.draw()
     plt.pause(0.0001)
     plt.clf()
-
-
-
-
 
 client = create_client("10.196.16.147", on_data=append_trace_to_realtime)
 client.select_stream("AM", "RE722", "EHZ")
