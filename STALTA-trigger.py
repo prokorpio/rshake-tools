@@ -10,7 +10,7 @@ fig, axs = plt.subplots(2)
 # derived from SC3's scautopick default config
 sta_window = 2 # seconds
 lta_window = 10 #80
-ratio_window = 120 # must be > lta_window
+ratio_window = 120 # must be > lta_window, and >= max_evt_len + 2*buffer
 thres_on = 3
 thres_off = 1.5
 sensor_freq=100 # RS4D has 100Hz sensor
@@ -36,9 +36,12 @@ def append_trace_to_realtime(tr):
     print("Calculating STA/LTA")
     sta_lta = rt_trace.copy().trigger("recstalta", sta=sta_window, lta=lta_window)
     len_new_samples = len(tr.data)
+    print("Len new samples:", len_new_samples)
+    # roll ratio
     ratio = np.roll(ratio,-len_new_samples)
     ratio[-len_new_samples:] = sta_lta[-len_new_samples:]
-
+    print("Len ratio:", len(ratio))
+    # roll pic_pairs
     if len(pick_pairs_ind) > 0:
         pick_pairs_ind = pick_pairs_ind - len_new_samples # shift indices
         pick_pairs_ind = pick_pairs_ind[(pick_pairs_ind>0).all(axis=1)] # remove negative indices
@@ -71,12 +74,11 @@ def append_trace_to_realtime(tr):
             # convert ind_tmp to ind on ratio
             pair_ind = pair_ind + len(ratio)- len(new_sta_lta_left_buffered)
 
-            if len(pick_pairs_ind) == 0:
-                pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
-                continue
-
             # check if pair is not yet recorded
-            if not (pick_pairs_ind == pair_ind).all(axis=1).any():
+            # Having at least one of the pair mems match any of the values
+            # in the pair-list is considered complete match to avoid
+            # overlapping triggers (happens on ends of new_sta_lta window)
+            if not (pick_pairs_ind == pair_ind).any():
                 pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
 
     print("Pick pairs len:")
