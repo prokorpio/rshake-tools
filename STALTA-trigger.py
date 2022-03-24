@@ -1,3 +1,4 @@
+from obspy.core import UTCDateTime
 from obspy.clients.seedlink.easyseedlink import create_client
 from obspy.realtime import RtTrace
 from obspy.signal.trigger import trigger_onset
@@ -5,12 +6,17 @@ from collections import deque
 import numpy as np
 import matplotlib.pyplot as plt
 
+
+
 fig, axs = plt.subplots(2)
+target_mseed_dir = "mseed_files"
+target_figures_dir = "png_files"
 
 # derived from SC3's scautopick default config
 sta_window = 2 # seconds
 lta_window = 15 # should've been 80
 #ratio_window = 120 # must be > lta_window, and >= max_evt_len + 2*buffer
+capture_buffer = 15 # seconds
 stalta_window = 120 # must be >= settle_buff + max_evt_len + 2*capture_buffer
 active_window = lta_window + stalta_window
 thres_on = 3
@@ -23,10 +29,13 @@ rt_trace = RtTrace(max_length=active_window)
 
 pick_pairs_ind = np.empty((0,2), int) # len is determined by diff of first & last
                               # elem should be within ratio_window*sensor_freq
+pick_pairs_to_save = np.empty((0,2), int)
+
 
 def append_trace_to_realtime(tr):
     global ratio
     global pick_pairs_ind
+    global pick_pairs_to_save
 
     freq = tr.stats.sampling_rate
     #print("Appending the following trace:")
@@ -55,6 +64,34 @@ def append_trace_to_realtime(tr):
     if (len(pick_pairs_ind) > 0) and (shift_amount > 0):
         pick_pairs_ind = pick_pairs_ind - shift_amount # shift indices
         pick_pairs_ind = pick_pairs_ind[(pick_pairs_ind>=nlta_window).all(axis=1)] # remove negative indices
+
+    print("Checking for data capture..")
+    ncapture_buffer = capture_buffer*freq
+    print("Pick pairs to save len:")
+    print(len(pick_pairs_to_save))
+    if (len(pick_pairs_to_save) > 0):
+        if shift_amount > 0:
+            pick_pairs_to_save = pick_pairs_to_save - shift_amount # shift indices
+
+        for pair_ind in pick_pairs_to_save:
+            print("testing:", pair_ind)
+            print("with right dist of:", len(sta_lta) - pair_ind[1])
+            if (len(sta_lta) - pair_ind[1] >= ncapture_buffer):
+                pair_ind_buffered = pair_ind + [-ncapture_buffer, ncapture_buffer]
+                pair_utc_buffered = rt_trace.stats.starttime.timestamp + pair_ind_buffered/freq
+                [start, end] = [UTCDateTime(t) for t in pair_utc_buffered]
+
+                print("Saving to:")
+                print(start, end)
+                mseed_to_save = rt_trace.slice(start,end)
+                file_name = "_".join([rt_trace.stats.network, \
+                                      rt_trace.stats.station,\
+                            start.strftime("%y-%m-%dT%H:%M:%S")])
+                mseed_name = target_mseed_dir + '/' + file_name +".mseed"
+                plot_name = target_figures_dir + '/' + file_name +".png"
+                mseed_to_save.write(mseed_name, format="MSEED", reclen=512)
+                mseed_to_save.plot(outfile=plot_name)
+                pick_pairs_to_save = pick_pairs_to_save[1:]
 
     print("Getting trigger times")
     # What happens if an event window is split between two batches?
@@ -96,10 +133,14 @@ def append_trace_to_realtime(tr):
             # pick-pairs aren't re-added to pic_pairs_ind
             if not (pick_pairs_ind == pair_ind).any():
                 pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
+                pick_pairs_to_save = np.vstack((pick_pairs_to_save, pair_ind))
+
+
+
 
     print("Pick pairs len:")
     print(len(pick_pairs_ind))
-    print(pick_pairs_ind)
+
 
     print()
 
