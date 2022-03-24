@@ -65,10 +65,9 @@ def append_trace_to_realtime(tr):
     for pair_ind in pick_pairs_ind_tmp:
         # skip if tOff was only considered bc its the end of batch
             # and not because it's actually <thres_off
-        if pair_ind[1] == last_sample_ind:
-            continue
+        if (pair_ind[1] != last_sample_ind) \
+            and new_sta_lta_left_buffered[pair_ind[1]]+1 > thres_off:
 
-        elif new_sta_lta_left_buffered[pair_ind[1]]+1 > thres_off:
             # convert ind_tmp to ind on ratio
             pair_ind = pair_ind + len(ratio)- len(new_sta_lta_left_buffered)
 
@@ -76,7 +75,7 @@ def append_trace_to_realtime(tr):
                 pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
                 continue
 
-            # check if pair is already recorded
+            # check if pair is not yet recorded
             if not (pick_pairs_ind == pair_ind).all(axis=1).any():
                 pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
 
@@ -85,8 +84,15 @@ def append_trace_to_realtime(tr):
 
     print()
 
+    # plot data
     axs[0].plot(rt_trace.data)
     axs[1].plot(ratio)
+
+    # plot triggers on ratio
+    y_min, y_max = axs[1].get_ylim()
+    axs[1].vlines(pick_pairs_ind[:,0], y_min, y_max, color='r', lw=2)
+    axs[1].vlines(pick_pairs_ind[:,1], y_min, y_max, color='b', lw=2)
+
     fig.canvas.draw_idle()
     plt.pause(0.0001)
     axs[0].cla()
