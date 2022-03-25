@@ -1,34 +1,47 @@
-from obspy.core import UTCDateTime
-from obspy.clients.seedlink.easyseedlink import create_client
-from obspy.realtime import RtTrace
-from obspy.signal.trigger import trigger_onset
-from collections import deque
+#--------------------------------------------------------------------
+# Filename: STALTA-trigger.py
+#  Purpose: Realtime data capture from Seedlink via recursive STA/LTA
+#   Author: Christopher Jeff Sanchez
+#
+# Copyright (C) 2022 C.J. Sanchez
+#---------------------------------------------------------------------
+
+import os
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from obspy.core import UTCDateTime
+from obspy.realtime import RtTrace
+from obspy.clients.seedlink.easyseedlink import create_client
+from obspy.signal.trigger import trigger_onset
+from collections import deque
+from pathlib import Path
 
-
+# parse cmd line args
+# create sub functions
+# create automatic folder creation
+# fix print statements
+# capture all channels
 
 fig, axs = plt.subplots(2)
+directory = os.path.join(os.getcwd(), "captures")
 target_mseed_dir = "mseed_files"
 target_figures_dir = "png_files"
 
-# derived from SC3's scautopick default config
 sta_window = 2 # seconds
 lta_window = 15 # should've been 80
-#ratio_window = 120 # must be > lta_window, and >= max_evt_len + 2*buffer
 capture_buffer = 15 # seconds
 stalta_window = 120 # must be >= settle_buff + max_evt_len + 2*capture_buffer
 active_window = lta_window + stalta_window
-thres_on = 3
-thres_off = 1.5
+thresh_on = 3
+thresh_off = 1.5
 sensor_freq=100 # RS4D has 100Hz sensor
-max_evt_len = 30*sensor_freq # Check longest possible event occurence (in sec)
+max_evt_len = 30 # Check longest possible event occurence (in sec)
 
 # lta_window is the required buffer to the left to compute stalta
 rt_trace = RtTrace(max_length=active_window)
 
-pick_pairs_ind = np.empty((0,2), int) # len is determined by diff of first & last
-                              # elem should be within ratio_window*sensor_freq
+pick_pairs_ind = np.empty((0,2), int)
 pick_pairs_to_save = np.empty((0,2), int)
 
 
@@ -84,13 +97,15 @@ def append_trace_to_realtime(tr):
                 print("Saving to:")
                 print(start, end)
                 mseed_to_save = rt_trace.slice(start,end)
-                file_name = "_".join([rt_trace.stats.network, \
+                event_name = "_".join([rt_trace.stats.network, \
                                       rt_trace.stats.station,\
                             start.strftime("%y-%m-%dT%H:%M:%S")])
-                mseed_name = target_mseed_dir + '/' + file_name +".mseed"
-                plot_name = target_figures_dir + '/' + file_name +".png"
-                mseed_to_save.write(mseed_name, format="MSEED", reclen=512)
-                mseed_to_save.plot(outfile=plot_name)
+                target_dir = os.path.join(directory, event_name)
+                Path(target_dir).mkdir(parents=True, exist_ok=True)
+                mseed_path = os.path.join(target_dir, event_name +".mseed")
+                plot_path = os.path.join(target_dir, event_name +".png")
+                mseed_to_save.write(mseed_path, format="MSEED", reclen=512)
+                mseed_to_save.plot(outfile=plot_path)
                 pick_pairs_to_save = pick_pairs_to_save[1:]
 
     print("Getting trigger times")
@@ -99,10 +114,10 @@ def append_trace_to_realtime(tr):
 
     # get part of sta/lta data that may contain tOn,tOff pair
     # edge case is when a tOff is detected at first sample of new_samples
-    necessary_data_len = min((len(sta_lta),max_evt_len+len_new_samples))
+    necessary_data_len = min((len(sta_lta),(max_evt_len*freq)+len_new_samples))
     new_sta_lta_left_buffered = sta_lta.data[-necessary_data_len:]
     pick_pairs_ind_tmp = trigger_onset(new_sta_lta_left_buffered,
-                        thres_on, thres_off, max_len=max_evt_len)
+                        thresh_on, thresh_off, max_len=max_evt_len*freq)
 
     if len(pick_pairs_ind_tmp) >0:
         print("temp picks")
@@ -116,9 +131,9 @@ def append_trace_to_realtime(tr):
     last_sample_ind = len(new_sta_lta_left_buffered)-1
     for pair_ind in pick_pairs_ind_tmp:
         # skip if tOff was only considered bc its the end of batch
-            # and not because it's actually <thres_off
+            # and not because it's actually <thresh_off
         if (pair_ind[1] != last_sample_ind) \
-            and new_sta_lta_left_buffered[pair_ind[1]]+1 > thres_off:
+            and new_sta_lta_left_buffered[pair_ind[1]]+1 > thresh_off:
 
             # convert ind_tmp to ind on sta_lta
             pair_ind = pair_ind + (len(sta_lta) - necessary_data_len)
@@ -134,9 +149,6 @@ def append_trace_to_realtime(tr):
             if not (pick_pairs_ind == pair_ind).any():
                 pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
                 pick_pairs_to_save = np.vstack((pick_pairs_to_save, pair_ind))
-
-
-
 
     print("Pick pairs len:")
     print(len(pick_pairs_ind))
@@ -158,6 +170,39 @@ def append_trace_to_realtime(tr):
     axs[0].cla()
     axs[1].cla()
 
-client = create_client("10.196.16.147", on_data=append_trace_to_realtime)
-client.select_stream("AM", "RE722", "EHZ")
-client.run()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Capture data from SeedLink server using STA/LTA")
+    parser.add_argument("--sta_window", type=int, default=2,
+        help="Length in seconds used for the short-term-average (STA)")
+    parser.add_argument("--lta_window", type=int, default=15,
+        help="Length in seconds used for the long-term-average (LTA)")
+    parser.add_argument("--thresh_on", type=float, default=3.0,
+        help="Upper threshold to create On-pick and activate data capture.")
+    parser.add_argument("--thresh_off", type=float, default=1.5,
+        help="Lower threshold to create Off-pick and finish data capture.")
+    parser.add_argument("--stalta_window", type=int, default=120,
+        help="Length in seconds where STA/LTA computation should have nonzero values")
+    parser.add_argument("--capture_buffer", type=int, default=10,
+        help="Buffer in seconds applied to left and right of data capture.")
+    parser.add_argument("--max_evt_len", type=int, default=30,
+        help="Length in seconds of maximum data capture before adding buffer.")
+    parser.add_argument("--directory", type=str, default="captures",
+        help="Target directory for outputs")
+
+    args = parser.parse_args()
+    print(args)
+    print('done')
+    #client = create_client("10.196.16.147", on_data=append_trace_to_realtime)
+    #client.select_stream("AM", "RE722", "EHZ")
+    #client.run()
+
+
+
+
+
+
+
+
+
+
