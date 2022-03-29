@@ -56,28 +56,18 @@ class PickWindow:
         self.thresh_on = thresh_on
         self.thresh_off = thresh_off
         self.stalta_window = stalta_window
-        self.capture_buffer = capture_buffer
+        #self.capture_buffer = capture_buffer
         self.max_evt_len = max_evt_len
 
         self.active_window = lta_window + stalta_window
 
         self.rt_trace = RtTrace(max_length=self.active_window)
-        #self.sta_lta = self.rt_trace.copy()
         self.pick_pairs_ind = np.empty((0,2), int)
-        self.pick_pairs_to_save = np.empty((0,2), int)
+        self.pick_pairs_is_processed = np.empty((0), bool)
 
-        fig, axs = plt.subplots(2)
-        self.fig = fig
-        self.axs = axs
-
-    # What can this object do
-        # roll data within window
-        # get on-off pick points within the window
-        # extract data accdg to recorded trigger points
-        # process extracted data:
-            # save mseed in counts
-            # convert to Disp, Vel, and Acc
-            # plot an image of the traces
+        #fig, axs = plt.subplots(2)
+        #self.fig = fig
+        #self.axs = axs
 
     def roll_data(self, tr):
         print("Rolling data")
@@ -138,35 +128,13 @@ class PickWindow:
 
                 if not (self.pick_pairs_ind == pair_ind).any():
                     self.pick_pairs_ind = np.vstack((self.pick_pairs_ind, pair_ind))
-                    #pick_pairs_to_save = np.vstack((pick_pairs_to_save, pair_ind))
+                    self.pick_pairs_is_processed = np.append( \
+                            self.pick_pairs_is_processed, False)
 
         print("Pick pairs len:")
         print(len(self.pick_pairs_ind))
 
         return sta_lta
-
-    def process(self, tr):
-        # append data
-        # update get trigger points
-        # check for data to save
-            # process data
-
-        self.roll_data(tr)
-        sta_lta = self.update_picks(len(tr.data))
-
-        # plot data
-        self.axs[0].plot(self.rt_trace.data)
-        self.axs[1].plot(sta_lta)
-
-        # plot triggers on ratio
-        y_min, y_max = self.axs[1].get_ylim()
-        self.axs[1].vlines(self.pick_pairs_ind[:,0], y_min, y_max, color='r', lw=2)
-        self.axs[1].vlines(self.pick_pairs_ind[:,1], y_min, y_max, color='b', lw=2)
-
-        self.fig.canvas.draw_idle()
-        plt.pause(0.0001)
-        self.axs[0].cla()
-        self.axs[1].cla()
 
 def process_active_window(tr):
     #global ratio
@@ -315,13 +283,51 @@ if __name__ == "__main__":
     parser.add_argument("--directory", type=str, default="captures",
         help="Target directory for outputs")
 
+    IP = "10.196.16.147"
     args = parser.parse_args()
-    print(args)
-
     pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
                  args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
-    client = create_client("10.196.16.147", on_data=pickWindow.process)
-    client.select_stream("AM", "RE722", "EHZ")
+    fig, axs = plt.subplots(2)
+
+    def process_data(tr):
+        if tr.stats.channel != "EHZ":
+            print(tr.stats.channel) # TODO: Buffer the other channels
+            return
+
+        pickWindow.roll_data(tr)
+        sta_lta = pickWindow.update_picks(len(tr.data))
+
+        # check for data-windows that are yet to be processed
+        if (len(pickWindow.pick_pairs_ind) > 0) and \
+            not pickWindow.pick_pairs_is_processed.all():
+
+            for i in np.where(~(pickWindow.pick_pairs_is_processed)):
+                pair_ind = np.squeeze(pickWindow.pick_pairs_ind[i])
+                ncapture_buffer = int(args.capture_buffer * tr.stats.sampling_rate)
+
+                # condition for data capture
+                if (len(sta_lta) - pair_ind[1]) >= ncapture_buffer:
+                    print("processing")
+
+                    pickWindow.pick_pairs_is_processed[i] = True
+
+
+        # plot data
+        axs[0].plot(pickWindow.rt_trace.data)
+        axs[1].plot(sta_lta)
+
+        # plot triggers on ratio
+        y_min, y_max = axs[1].get_ylim()
+        axs[1].vlines(pickWindow.pick_pairs_ind[:,0], y_min, y_max, color='r', lw=2)
+        axs[1].vlines(pickWindow.pick_pairs_ind[:,1], y_min, y_max, color='b', lw=2)
+
+        fig.canvas.draw_idle()
+        plt.pause(0.0001)
+        axs[0].cla()
+        axs[1].cla()
+
+    client = create_client(IP, on_data=process_data)
+    client.select_stream("AM", "RE722", "E??")
     client.run()
     print('done')
 
