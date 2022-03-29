@@ -17,36 +17,159 @@ from obspy.signal.trigger import trigger_onset
 from collections import deque
 from pathlib import Path
 
-# parse cmd line args
+# parse cmd line args [DONE]
 # create sub functions
-# create automatic folder creation
+# create automatic folder creation [DONE]
 # fix print statements
 # capture all channels
+# handle dropped packets
 
-fig, axs = plt.subplots(2)
+#fig, axs = plt.subplots(2)
 directory = os.path.join(os.getcwd(), "captures")
-target_mseed_dir = "mseed_files"
-target_figures_dir = "png_files"
 
-sta_window = 2 # seconds
-lta_window = 15 # should've been 80
-capture_buffer = 15 # seconds
-stalta_window = 120 # must be >= settle_buff + max_evt_len + 2*capture_buffer
-active_window = lta_window + stalta_window
-thresh_on = 3
-thresh_off = 1.5
-sensor_freq=100 # RS4D has 100Hz sensor
-max_evt_len = 30 # Check longest possible event occurence (in sec)
+#sta_window = 2 # seconds
+#lta_window = 15 # should've been 80
+#capture_buffer = 15 # seconds
+#stalta_window = 120 # must be >= settle_buff + max_evt_len + 2*capture_buffer
+#active_window = lta_window + stalta_window
+#thresh_on = 3
+#thresh_off = 1.5
+#sensor_freq=100 # RS4D has 100Hz sensor
+#max_evt_len = 30 # Check longest possible event occurence (in sec)
 
 # lta_window is the required buffer to the left to compute stalta
-rt_trace = RtTrace(max_length=active_window)
+#rt_trace = RtTrace(max_length=active_window)
 
-pick_pairs_ind = np.empty((0,2), int)
-pick_pairs_to_save = np.empty((0,2), int)
+#pick_pairs_ind = np.empty((0,2), int)
+#pick_pairs_to_save = np.empty((0,2), int)
 
+class PickWindow:
+    """A window of rolling data where picks are computed as trigger
+       for further data processing.
+    """
 
-def append_trace_to_realtime(tr):
-    global ratio
+    def __init__(self, sta_window, lta_window, stalta_window,
+                 thresh_on, thresh_off, capture_buffer, max_evt_len):
+
+        self.sta_window = sta_window
+        self.lta_window = lta_window
+        self.thresh_on = thresh_on
+        self.thresh_off = thresh_off
+        self.stalta_window = stalta_window
+        self.capture_buffer = capture_buffer
+        self.max_evt_len = max_evt_len
+
+        self.active_window = lta_window + stalta_window
+
+        self.rt_trace = RtTrace(max_length=self.active_window)
+        #self.sta_lta = self.rt_trace.copy()
+        self.pick_pairs_ind = np.empty((0,2), int)
+        self.pick_pairs_to_save = np.empty((0,2), int)
+
+        fig, axs = plt.subplots(2)
+        self.fig = fig
+        self.axs = axs
+
+    # What can this object do
+        # roll data within window
+        # get on-off pick points within the window
+        # extract data accdg to recorded trigger points
+        # process extracted data:
+            # save mseed in counts
+            # convert to Disp, Vel, and Acc
+            # plot an image of the traces
+
+    def roll_data(self, tr):
+        print("Rolling data")
+        freq = tr.stats.sampling_rate
+        len_new_samples = len(tr.data)
+        prev_trace_len = len(self.rt_trace.data)
+        self.rt_trace.append(tr) # rolls automatically due to max_length
+
+        shift_amount = (prev_trace_len + len_new_samples) - self.active_window*freq
+        if (shift_amount > 0) and (len(self.pick_pairs_ind) > 0):
+            self.pick_pairs_ind = self.pick_pairs_ind - shift_amount # shift indices via broadcast
+            self.pick_pairs_ind = self.pick_pairs_ind[\
+                    (self.pick_pairs_ind >= int(self.lta_window*freq)).all(axis=1)] # remove indices past stalta_window
+
+    def update_picks(self, len_new_samples):
+        print("Updating picks list")
+        print("    Calculating STA/LTA")
+        freq = self.rt_trace.stats.sampling_rate
+        sta_lta = self.rt_trace.copy().trigger("recstalta", \
+                                            sta=self.sta_window, lta=self.lta_window)
+
+        # Avoid spike at beginning, zero out misleading data
+        if len(sta_lta) < int(self.lta_window*freq):
+            sta_lta.data[:int(self.lta_window*freq)] = 0
+            # After sta_lta becomes long than lta_window, this is automatically done
+            # see recstalta.c by Moritz Beyreuther
+
+        print("    Getting Pick Pairs")
+        # Get part of sta/lta data that may contain tOn-tOff pick pair
+        # Edge case is when a tOff is detected at first sample of new_samples
+        data_len_to_pick = int(min((len(sta_lta),(self.max_evt_len*freq)+len_new_samples)))
+        data_to_pick = sta_lta.data[-data_len_to_pick:]
+        pick_pairs_ind_tmp = trigger_onset(data_to_pick,
+                            self.thresh_on, self.thresh_off, max_len=self.max_evt_len*freq)
+
+        # Handle re-detected pairs
+        last_sample_ind = data_len_to_pick-1
+        for pair_ind in pick_pairs_ind_tmp:
+
+            # What happens if an event window is split between two batches?
+            # tOff is taken to be at the last sample of the array despite
+            # thresh_off condition not satisfied..
+            # Skip such pairs.
+            if (pair_ind[1] != last_sample_ind) \
+                and data_to_pick[pair_ind[1]+1] < self.thresh_off:
+                #print("temp tOff:", data_to_pick[pair_ind[1]+1])
+
+                # Convert ind_tmp to ind on sta_lta
+                pair_ind = pair_ind + (len(sta_lta) - data_len_to_pick)
+
+                # Check if pair is not yet recorded
+                # Having at least one of the pair mems match any of the values
+                # in the pair-list is considered complete match to avoid
+                # overlapping triggers (happens on ends of new_sta_lta window)
+                # It is important that necessary_data_len doesn't intersect
+                # with left_edge_ind so that shorter versions of outgoing
+                # pick-pairs aren't re-added to pic_pairs_ind
+
+                if not (self.pick_pairs_ind == pair_ind).any():
+                    self.pick_pairs_ind = np.vstack((self.pick_pairs_ind, pair_ind))
+                    #pick_pairs_to_save = np.vstack((pick_pairs_to_save, pair_ind))
+
+        print("Pick pairs len:")
+        print(len(self.pick_pairs_ind))
+
+        return sta_lta
+
+    def process(self, tr):
+        # append data
+        # update get trigger points
+        # check for data to save
+            # process data
+
+        self.roll_data(tr)
+        sta_lta = self.update_picks(len(tr.data))
+
+        # plot data
+        self.axs[0].plot(self.rt_trace.data)
+        self.axs[1].plot(sta_lta)
+
+        # plot triggers on ratio
+        y_min, y_max = self.axs[1].get_ylim()
+        self.axs[1].vlines(self.pick_pairs_ind[:,0], y_min, y_max, color='r', lw=2)
+        self.axs[1].vlines(self.pick_pairs_ind[:,1], y_min, y_max, color='b', lw=2)
+
+        self.fig.canvas.draw_idle()
+        plt.pause(0.0001)
+        self.axs[0].cla()
+        self.axs[1].cla()
+
+def process_active_window(tr):
+    #global ratio
     global pick_pairs_ind
     global pick_pairs_to_save
 
@@ -69,7 +192,7 @@ def append_trace_to_realtime(tr):
     nlta_window = int(lta_window*freq)
     if len(sta_lta) < nlta_window:
         sta_lta.data[:nlta_window] = 0
-        # after the condition isn't met anymore, this is automatically done
+        # After the condition isn't met anymore, this is automatically done
         # see recstalta.c by Moritz Beyreuther
 
     # roll pic_pairs once sta_lta values starts rolling
@@ -139,13 +262,15 @@ def append_trace_to_realtime(tr):
             pair_ind = pair_ind + (len(sta_lta) - necessary_data_len)
             print("temp picks adjusted:")
             print(pair_ind)
-            # check if pair is not yet recorded
+
+            # Check if pair is not yet recorded
             # Having at least one of the pair mems match any of the values
             # in the pair-list is considered complete match to avoid
             # overlapping triggers (happens on ends of new_sta_lta window)
             # It is important that necessary_data_len doesn't intersect
             # with left_edge_ind so that shorter versions of outgoing
             # pick-pairs aren't re-added to pic_pairs_ind
+
             if not (pick_pairs_ind == pair_ind).any():
                 pick_pairs_ind = np.vstack((pick_pairs_ind, pair_ind))
                 pick_pairs_to_save = np.vstack((pick_pairs_to_save, pair_ind))
@@ -192,10 +317,13 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     print(args)
+
+    pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
+                 args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
+    client = create_client("10.196.16.147", on_data=pickWindow.process)
+    client.select_stream("AM", "RE722", "EHZ")
+    client.run()
     print('done')
-    #client = create_client("10.196.16.147", on_data=append_trace_to_realtime)
-    #client.select_stream("AM", "RE722", "EHZ")
-    #client.run()
 
 
 
