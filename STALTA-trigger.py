@@ -8,20 +8,22 @@
 
 import os
 import argparse
+from collections import deque
+from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from obspy.core import UTCDateTime
 from obspy.realtime import RtTrace
 from obspy.clients.seedlink.easyseedlink import create_client
+from obspy.clients.seedlink.basic_client import Client as BasicSLClient
 from obspy.signal.trigger import trigger_onset
-from collections import deque
-from pathlib import Path
+
 
 # parse cmd line args [DONE]
-# create sub functions
+# create sub functions [DONE]
 # create automatic folder creation [DONE]
+# capture all channels [DONE]
 # fix print statements
-# capture all channels
 # handle dropped packets
 
 #fig, axs = plt.subplots(2)
@@ -291,22 +293,39 @@ if __name__ == "__main__":
         help="Target directory for outputs")
 
     IP = "10.196.16.147"
+
     args = parser.parse_args()
     pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
                  args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
-    fig, axs = plt.subplots(2)
+
+    basic_sl_client = BasicSLClient(IP) # for basic requests
+    channels = basic_sl_client.get_info(level="channel")
+
+    for i, channel in enumerate(channels):
+        if ("HZ" in channel[3]):
+            network = channel[0]
+            station = channel[1]
+            basis_channel = channel[3]
+            break
+        elif i == len(channels)-1:
+            raise RuntimeError("*HZ channel not available in rshake@"+IP)
+
+    rt_sl_client = create_client(IP) # for realtime sl streaming
+    rt_sl_client.select_stream(network, station, basis_channel)
+
+    fig, axs = plt.subplots(2) # for visual checking
 
     def process_data(tr):
-        if tr.stats.channel != "EHZ":
-            print(tr.stats.channel) # TODO: Buffer the other channels
-            return
+        global network
+        global station
 
         pickWindow.roll_data(tr)
         sta_lta = pickWindow.calculate_new_picks(len(tr.data))
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
-        for pick_pair_utc in pick_pairs_to_process:
-            print(pick_pair_utc)
+        for (start, end) in pick_pairs_to_process:
+            st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
+            print(st)
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
@@ -322,10 +341,8 @@ if __name__ == "__main__":
         axs[0].cla()
         axs[1].cla()
 
-    client = create_client(IP, on_data=process_data)
-    client.select_stream("AM", "RE722", "E??")
-    client.run()
-    print('done')
+    rt_sl_client.on_data = process_data
+    rt_sl_client.run()
 
 
 
