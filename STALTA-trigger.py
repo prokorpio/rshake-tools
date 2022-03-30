@@ -27,7 +27,6 @@ from obspy.signal.trigger import trigger_onset
 # handle dropped packets
 
 #fig, axs = plt.subplots(2)
-directory = os.path.join(os.getcwd(), "captures")
 
 class PickWindow:
     """A window of rolling data where picks are computed as trigger
@@ -144,6 +143,18 @@ class PickWindow:
                     self.pick_pairs_is_processed[i] = True
 
         return pick_pairs_utc
+
+def save_stream(st, event_name, title, save_img=True):
+    directory = os.path.join(os.getcwd(), "captures")
+    target_dir = os.path.join(directory, event_name)
+    Path(target_dir).mkdir(parents=True, exist_ok=True)
+
+    mseed_path = os.path.join(target_dir, title +".mseed")
+    st.write(mseed_path, format="MSEED", reclen=512)
+
+    if save_img:
+        plot_path = os.path.join(target_dir, title +".png")
+        st.plot(outfile=plot_path)
 
 def process_active_window(tr):
     #global ratio
@@ -275,6 +286,8 @@ def process_active_window(tr):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Capture data from SeedLink server using STA/LTA")
+    parser.add_argument("--IP", type=str, default="rs.local",
+        help="Host address of the raspberryshake unit")
     parser.add_argument("--sta_window", type=int, default=2,
         help="Length in seconds used for the short-term-average (STA)")
     parser.add_argument("--lta_window", type=int, default=15,
@@ -292,15 +305,10 @@ if __name__ == "__main__":
     parser.add_argument("--directory", type=str, default="captures",
         help="Target directory for outputs")
 
-    IP = "10.196.16.147"
-
     args = parser.parse_args()
-    pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
-                 args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
 
-    basic_sl_client = BasicSLClient(IP) # for basic requests
+    basic_sl_client = BasicSLClient(args.IP) # for basic sl requests
     channels = basic_sl_client.get_info(level="channel")
-
     for i, channel in enumerate(channels):
         if ("HZ" in channel[3]):
             network = channel[0]
@@ -308,10 +316,13 @@ if __name__ == "__main__":
             basis_channel = channel[3]
             break
         elif i == len(channels)-1:
-            raise RuntimeError("*HZ channel not available in rshake@"+IP)
+            raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
 
-    rt_sl_client = create_client(IP) # for realtime sl streaming
+    rt_sl_client = create_client(args.IP) # for realtime sl streaming
     rt_sl_client.select_stream(network, station, basis_channel)
+
+    pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
+                 args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
 
     fig, axs = plt.subplots(2) # for visual checking
 
@@ -324,8 +335,12 @@ if __name__ == "__main__":
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
         for (start, end) in pick_pairs_to_process:
+            event_name = "_".join([network, \
+                                   station, \
+                                   start.strftime("%y-%m-%dT%H:%M:%S")])
+            print("Processing", event_name)
             st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
-            print(st)
+            save_stream(st, event_name, "counts")
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
