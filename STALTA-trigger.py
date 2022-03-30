@@ -16,7 +16,9 @@ from obspy.core import UTCDateTime
 from obspy.realtime import RtTrace
 from obspy.clients.seedlink.easyseedlink import create_client
 from obspy.clients.seedlink.basic_client import Client as BasicSLClient
+from obspy.clients.fdsn import Client as RS_Client
 from obspy.signal.trigger import trigger_onset
+from obspy.core.inventory import Network
 
 
 # parse cmd line args [DONE]
@@ -144,17 +146,37 @@ class PickWindow:
 
         return pick_pairs_utc
 
-def save_stream(st, event_name, title, save_img=True):
+def save(st, event_name, title, save_img=True, save_str=True):
     directory = os.path.join(os.getcwd(), "captures")
     target_dir = os.path.join(directory, event_name)
     Path(target_dir).mkdir(parents=True, exist_ok=True)
 
-    mseed_path = os.path.join(target_dir, title +".mseed")
-    st.write(mseed_path, format="MSEED", reclen=512)
+    if save_str:
+        mseed_path = os.path.join(target_dir, title +".mseed")
+        st.write(mseed_path, format="MSEED", reclen=512)
 
     if save_img:
         plot_path = os.path.join(target_dir, title +".png")
         st.plot(outfile=plot_path)
+
+def convert_counts_to_metric(st, inv):
+    stream = st.copy() # make a deepcopy to avoid altering original
+    vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
+    acc_channels = ["ENE", "ENN", "ENZ"]
+
+    for tr in stream:
+        units = "COUNTS"
+        if tr.stats.channel in vel_channels:
+            units = "VEL"
+        elif tr.stats.channel in acc_channels:
+            units = "ACC"
+
+        if units != "COUNTS":
+            freq = tr.stats.sampling_rate
+            tr.remove_response(inventory=inv, pre_filt=[0.1, 0.5, 0.95*freq, freq],
+                               output=units, water_level=4.5, taper=False)
+
+    return stream
 
 
 if __name__ == "__main__":
@@ -195,6 +217,17 @@ if __name__ == "__main__":
     rt_sl_client = create_client(args.IP) # for realtime sl streaming
     rt_sl_client.select_stream(network, station, basis_channel)
 
+    # create copy of latest inv, remove date so it can be used in remove_response
+    rs_client = RS_Client("RASPISHAKE")
+    inv = rs_client.get_stations(network=network, station=station, level="RESP")
+    latest_station_response = (inv[-1][-1]).copy()
+    latest_station_response.start_date = None
+    latest_station_response.end_date = None
+    for cha in latest_station_response:
+        cha.start_date=None
+        cha.end_date=None
+    inv = Network(code=network, stations=[latest_station_response])
+
     pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
                  args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
 
@@ -203,6 +236,7 @@ if __name__ == "__main__":
     def process_data(tr):
         global network
         global station
+        global inv
 
         pickWindow.roll_data(tr)
         sta_lta = pickWindow.calculate_new_picks(len(tr.data))
@@ -214,7 +248,11 @@ if __name__ == "__main__":
                                    start.strftime("%y-%m-%dT%H:%M:%S")])
             print("Processing", event_name)
             st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
-            save_stream(st, event_name, "counts")
+            save(st, event_name, "counts")
+            st_metric = convert_counts_to_metric(st, inv)
+            save(st_metric, event_name, "metric", save_img=False)
+            for tr in st_metric:
+                save(tr, event_name, tr.stats.channel+"_metric", save_str=False)
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
