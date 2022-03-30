@@ -27,22 +27,6 @@ from pathlib import Path
 #fig, axs = plt.subplots(2)
 directory = os.path.join(os.getcwd(), "captures")
 
-#sta_window = 2 # seconds
-#lta_window = 15 # should've been 80
-#capture_buffer = 15 # seconds
-#stalta_window = 120 # must be >= settle_buff + max_evt_len + 2*capture_buffer
-#active_window = lta_window + stalta_window
-#thresh_on = 3
-#thresh_off = 1.5
-#sensor_freq=100 # RS4D has 100Hz sensor
-#max_evt_len = 30 # Check longest possible event occurence (in sec)
-
-# lta_window is the required buffer to the left to compute stalta
-#rt_trace = RtTrace(max_length=active_window)
-
-#pick_pairs_ind = np.empty((0,2), int)
-#pick_pairs_to_save = np.empty((0,2), int)
-
 class PickWindow:
     """A window of rolling data where picks are computed as trigger
        for further data processing.
@@ -55,8 +39,8 @@ class PickWindow:
         self.lta_window = lta_window
         self.thresh_on = thresh_on
         self.thresh_off = thresh_off
-        self.stalta_window = stalta_window
-        #self.capture_buffer = capture_buffer
+        self.stalta_window = stalta_window # Must be >= settle_buff + max_evt_len + 2*capture_buffer
+        self.capture_buffer = capture_buffer
         self.max_evt_len = max_evt_len
 
         self.active_window = lta_window + stalta_window
@@ -82,8 +66,8 @@ class PickWindow:
             self.pick_pairs_ind = self.pick_pairs_ind[\
                     (self.pick_pairs_ind >= int(self.lta_window*freq)).all(axis=1)] # remove indices past stalta_window
 
-    def update_picks(self, len_new_samples):
-        print("Updating picks list")
+    def calculate_new_picks(self, len_new_samples):
+        print("Calculating new picks")
         print("    Calculating STA/LTA")
         freq = self.rt_trace.stats.sampling_rate
         sta_lta = self.rt_trace.copy().trigger("recstalta", \
@@ -135,6 +119,29 @@ class PickWindow:
         print(len(self.pick_pairs_ind))
 
         return sta_lta
+
+    def get_processable_picks(self):
+        print("Checking available picks")
+        pick_pairs_utc = []
+        if (len(self.pick_pairs_ind) > 0) and \
+            not self.pick_pairs_is_processed.all():
+
+            for i in np.where(~(self.pick_pairs_is_processed)):
+                freq = self.rt_trace.stats.sampling_rate
+                pair_ind = np.squeeze(self.pick_pairs_ind[i])
+                ncapture_buffer = int(self.capture_buffer * freq)
+
+
+                # condition for data capture
+                if ((len(self.rt_trace.data) - 1) - pair_ind[1]) >= ncapture_buffer:
+                    starttime = self.rt_trace.stats.starttime.timestamp
+                    pair_ind_buffered = pair_ind + [-ncapture_buffer, ncapture_buffer]
+                    pair_utc_buffered = starttime + pair_ind_buffered/freq
+                    [start, end] = [UTCDateTime(t) for t in pair_utc_buffered]
+                    pick_pairs_utc.append([start, end])
+                    self.pick_pairs_is_processed[i] = True
+
+        return pick_pairs_utc
 
 def process_active_window(tr):
     #global ratio
@@ -295,22 +302,11 @@ if __name__ == "__main__":
             return
 
         pickWindow.roll_data(tr)
-        sta_lta = pickWindow.update_picks(len(tr.data))
+        sta_lta = pickWindow.calculate_new_picks(len(tr.data))
+        pick_pairs_to_process = pickWindow.get_processable_picks()
 
-        # check for data-windows that are yet to be processed
-        if (len(pickWindow.pick_pairs_ind) > 0) and \
-            not pickWindow.pick_pairs_is_processed.all():
-
-            for i in np.where(~(pickWindow.pick_pairs_is_processed)):
-                pair_ind = np.squeeze(pickWindow.pick_pairs_ind[i])
-                ncapture_buffer = int(args.capture_buffer * tr.stats.sampling_rate)
-
-                # condition for data capture
-                if (len(sta_lta) - pair_ind[1]) >= ncapture_buffer:
-                    print("processing")
-
-                    pickWindow.pick_pairs_is_processed[i] = True
-
+        for pick_pair_utc in pick_pairs_to_process:
+            print(pick_pair_utc)
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
