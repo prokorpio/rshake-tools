@@ -12,23 +12,22 @@ from collections import deque
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
+from obspy import read_inventory
 from obspy.core import UTCDateTime
 from obspy.realtime import RtTrace
 from obspy.clients.seedlink.easyseedlink import create_client
 from obspy.clients.seedlink.basic_client import Client as BasicSLClient
 from obspy.clients.fdsn import Client as RS_Client
 from obspy.signal.trigger import trigger_onset
-from obspy.core.inventory import Network
+from obspy.core.inventory import Inventory, Network
 
-
+# TODO:
 # parse cmd line args [DONE]
 # create sub functions [DONE]
 # create automatic folder creation [DONE]
 # capture all channels [DONE]
 # fix print statements
 # handle dropped packets
-
-#fig, axs = plt.subplots(2)
 
 class PickWindow:
     """A window of rolling data where picks are computed as trigger
@@ -182,7 +181,7 @@ def convert_counts_to_metric(st, inv):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Capture data from SeedLink server using STA/LTA")
-    parser.add_argument("--IP", type=str, default="rs.local",
+    parser.add_argument("--IP", type=str, default="rs.local", required=True,
         help="Host address of the raspberryshake unit")
     parser.add_argument("--sta_window", type=int, default=2,
         help="Length in seconds used for the short-term-average (STA)")
@@ -203,7 +202,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    basic_sl_client = BasicSLClient(args.IP) # for basic sl requests
+    # get station information
+    basic_sl_client = BasicSLClient(args.IP) # client for basic sl requests
     channels = basic_sl_client.get_info(level="channel")
     for i, channel in enumerate(channels):
         if ("HZ" in channel[3]):
@@ -214,19 +214,30 @@ if __name__ == "__main__":
         elif i == len(channels)-1:
             raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
 
-    rt_sl_client = create_client(args.IP) # for realtime sl streaming
-    rt_sl_client.select_stream(network, station, basis_channel)
-
     # create copy of latest inv, remove date so it can be used in remove_response
-    rs_client = RS_Client("RASPISHAKE")
-    inv = rs_client.get_stations(network=network, station=station, level="RESP")
-    latest_station_response = (inv[-1][-1]).copy()
-    latest_station_response.start_date = None
-    latest_station_response.end_date = None
-    for cha in latest_station_response:
-        cha.start_date=None
-        cha.end_date=None
-    inv = Network(code=network, stations=[latest_station_response])
+    inv_dir = "inventories"
+    inv_path = os.path.join(os.getcwd(), inv_dir, network+"_"+station+".xml")
+    if os.path.exists(inv_path):
+        print("reading inv")
+        inv = read_inventory(inv_path)
+    else:
+        print("downloading inv")
+        rs_client = RS_Client("RASPISHAKE")
+        inv = rs_client.get_stations(network=network, station=station, level="RESP")
+        latest_station_response = (inv[-1][-1]).copy()
+        latest_station_response.start_date = None
+        latest_station_response.end_date = None
+        for cha in latest_station_response:
+            cha.start_date=None
+            cha.end_date=None
+        inv = Inventory(networks=[ \
+                Network(code=network, stations=[latest_station_response])])
+        Path(os.path.dirname(inv_path)).mkdir(parents=True, exist_ok=True)
+        inv.write(inv_path, format="STATIONXML")
+
+    # select realtime stream
+    rt_sl_client = create_client(args.IP) # client for realtime sl streaming
+    rt_sl_client.select_stream(network, station, basis_channel)
 
     pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
                  args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
@@ -243,16 +254,15 @@ if __name__ == "__main__":
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
         for (start, end) in pick_pairs_to_process:
-            event_name = "_".join([network, \
-                                   station, \
-                                   start.strftime("%y-%m-%dT%H:%M:%S")])
-            print("Processing", event_name)
+            event_name = "_".join([network, station,
+                start.strftime("%y-%m-%dT%H:%M:%S")])
             st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
             save(st, event_name, "counts")
             st_metric = convert_counts_to_metric(st, inv)
             save(st_metric, event_name, "metric", save_img=False)
-            for tr in st_metric:
-                save(tr, event_name, tr.stats.channel+"_metric", save_str=False)
+            for tr in st_metric: # save each channel plot separately
+                save(tr, event_name, tr.stats.channel+"_metric",
+                     save_str=False)
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
