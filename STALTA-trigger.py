@@ -20,6 +20,9 @@ from obspy.clients.fdsn import Client as RS_Client
 from obspy.signal.trigger import trigger_onset
 from obspy.core.inventory import Network
 
+from time import sleep
+from threading import Thread
+
 
 # parse cmd line args [DONE]
 # create sub functions [DONE]
@@ -52,9 +55,7 @@ class PickWindow:
         self.pick_pairs_ind = np.empty((0,2), int)
         self.pick_pairs_is_processed = np.empty((0), bool)
 
-        #fig, axs = plt.subplots(2)
-        #self.fig = fig
-        #self.axs = axs
+
 
     def roll_data(self, tr):
         print("Rolling data")
@@ -146,6 +147,7 @@ class PickWindow:
 
         return pick_pairs_utc
 
+
 def save(st, event_name, title, save_img=True, save_str=True):
     directory = os.path.join(os.getcwd(), "captures")
     target_dir = os.path.join(directory, event_name)
@@ -203,22 +205,26 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    basic_sl_client = BasicSLClient(args.IP) # for basic sl requests
-    channels = basic_sl_client.get_info(level="channel")
-    for i, channel in enumerate(channels):
-        if ("HZ" in channel[3]):
-            network = channel[0]
-            station = channel[1]
-            basis_channel = channel[3]
-            break
-        elif i == len(channels)-1:
-            raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
+    #basic_sl_client = BasicSLClient(args.IP) # for basic sl requests
+    #channels = basic_sl_client.get_info(level="channel")
+    #for i, channel in enumerate(channels):
+    #    if ("HZ" in channel[3]):
+    #        network = channel[0]
+    #        station = channel[1]
+    #        basis_channel = channel[3]
+    #        break
+    #    elif i == len(channels)-1:
+    #        raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
+    network = "GE"
+    station = "WLF"
+    basis_channel = "HLZ"
 
     rt_sl_client = create_client(args.IP) # for realtime sl streaming
     rt_sl_client.select_stream(network, station, basis_channel)
 
     # create copy of latest inv, remove date so it can be used in remove_response
-    rs_client = RS_Client("RASPISHAKE")
+    rs_client = RS_Client("IRIS")
+    #rs_client = RS_Client("RASPISHAKE")
     inv = rs_client.get_stations(network=network, station=station, level="RESP")
     latest_station_response = (inv[-1][-1]).copy()
     latest_station_response.start_date = None
@@ -233,26 +239,40 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(2) # for visual checking
 
+    def task(id_):
+        print("PROCESSING TASK", id_)
+        sleep(20)
+        print("DONE")
+
+
+    fns = [task]
+
+    counter_for_testing = 0
     def process_data(tr):
         global network
         global station
         global inv
+        global counter_for_testing
+        global fns
 
         pickWindow.roll_data(tr)
         sta_lta = pickWindow.calculate_new_picks(len(tr.data))
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
-        for (start, end) in pick_pairs_to_process:
-            event_name = "_".join([network, \
-                                   station, \
-                                   start.strftime("%y-%m-%dT%H:%M:%S")])
-            print("Processing", event_name)
-            st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
-            save(st, event_name, "counts")
-            st_metric = convert_counts_to_metric(st, inv)
-            save(st_metric, event_name, "metric", save_img=False)
-            for tr in st_metric:
-                save(tr, event_name, tr.stats.channel+"_metric", save_str=False)
+        counter_for_testing += 1
+        print("COUNTER:",counter_for_testing)
+        if counter_for_testing == 5:
+            counter_for_testing = 0
+            processes = [Thread(target=fn, args=(1,)).start() for fn in fns]
+        #for (start, end) in pick_pairs_to_process:
+        #    event_name = "_".join([network, station, start.strftime("%y-%m-%dT%H:%M:%S")])
+        #    print("Processing", event_name)
+        #    st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
+        #    save(st, event_name, "counts")
+        #    st_metric = convert_counts_to_metric(st, inv)
+        #    save(st_metric, event_name, "metric", save_img=False)
+        #    for tr in st_metric:
+        #        save(tr, event_name, tr.stats.channel+"_metric", save_str=False)
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
