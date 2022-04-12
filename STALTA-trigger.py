@@ -9,6 +9,7 @@
 import os
 import argparse
 from collections import deque
+from threading import Thread
 from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
@@ -160,7 +161,8 @@ def save(st, event_name, title, save_img=True, save_str=True):
 
 def convert_counts_to_metric(st, inv):
     stream = st.copy() # make a deepcopy to avoid altering original
-    vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
+    #vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
+    vel_channels = ["EHE", "EHN", "EHZ", "SHZ", "HHZ"]
     acc_channels = ["ENE", "ENN", "ENZ"]
 
     for tr in stream:
@@ -174,6 +176,25 @@ def convert_counts_to_metric(st, inv):
             freq = tr.stats.sampling_rate
             tr.remove_response(inventory=inv, pre_filt=[0.1, 0.5, 0.95*freq, freq],
                                output=units, water_level=4.5, taper=False)
+
+        tr.stats.units = units
+
+    return stream
+
+def convert_metric_to_disp(st):
+    stream = st.copy() # make a deepcopy to avoid altering original
+    for tr in stream:
+        if tr.stats.units == "VEL":
+            tr.integrate(method="cumtrapz")
+            tr.stats.units = "DISP"
+        elif tr.stats.units == "ACC":
+            tr.integrate(method="cumtrapz")
+            tr.integrate(method="cumtrapz")
+            tr.stats.units = "DISP"
+        elif tr.stats.units == "DISP":
+            continue
+        else:
+            print("Can't convert", tr.stats.units, "to DISP.")
 
     return stream
 
@@ -203,16 +224,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # get station information
-    basic_sl_client = BasicSLClient(args.IP) # client for basic sl requests
-    channels = basic_sl_client.get_info(level="channel")
-    for i, channel in enumerate(channels):
-        if ("HZ" in channel[3]):
-            network = channel[0]
-            station = channel[1]
-            basis_channel = channel[3]
-            break
-        elif i == len(channels)-1:
-            raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
+    basic_sl_client = BasicSLClient(args.IP)
+    #channels = basic_sl_client.get_info(level="channel")
+    #for i, channel in enumerate(channels):
+    #    if ("HZ" in channel[3]):
+    #        network = channel[0]
+    #        station = channel[1]
+    #        basis_channel = channel[3]
+    #        break
+    #    elif i == len(channels)-1:
+    #        raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
+    network = "GE"
+    station = "WLF"
+    basis_channel = "HHZ"
 
     # create copy of latest inv, remove date so it can be used in remove_response
     inv_dir = "inventories"
@@ -222,7 +246,8 @@ if __name__ == "__main__":
         inv = read_inventory(inv_path)
     else:
         print("downloading inv")
-        rs_client = RS_Client("RASPISHAKE")
+        rs_client = RS_Client("IRIS")
+        #rs_client = RS_Client("RASPISHAKE")
         inv = rs_client.get_stations(network=network, station=station, level="RESP")
         latest_station_response = (inv[-1][-1]).copy()
         latest_station_response.start_date = None
@@ -244,25 +269,52 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(2) # for visual checking
 
-    def process_data(tr):
+    def download_convert_save(start, end):
+        global basic_sl_client
         global network
         global station
         global inv
+
+        event_name = "_".join([network, station,
+            start.strftime("%y-%m-%dT%H:%M:%S")])
+        print("THREAD:", event_name)
+        st = basic_sl_client.get_waveforms(network, station, "*", "HHZ", start, end)
+        #st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
+        print("THREAD:","Downloaded ST")
+        save(st, event_name, "counts")
+        print("THREAD:","Saved ST")
+        st_metric  = convert_counts_to_metric(st, inv)
+        print("THREAD:","Converted ST to metric")
+        save(st_metric, event_name, "metric")
+        print("THREAD:","Saved ST in metric")
+        st_disp = convert_metric_to_disp(st_metric)
+        print("THREAD:","Converted ST to DISP")
+        save(st_disp, event_name, "DISP")
+        print("THREAD:","Saved ST in DISP")
+
+    counter_for_testing = 0
+    processing_fns = [download_convert_save]
+    def on_data_callback(tr):
+        global counter_for_testing
 
         pickWindow.roll_data(tr)
         sta_lta = pickWindow.calculate_new_picks(len(tr.data))
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
-        for (start, end) in pick_pairs_to_process:
-            event_name = "_".join([network, station,
-                start.strftime("%y-%m-%dT%H:%M:%S")])
-            st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
-            save(st, event_name, "counts")
-            st_metric = convert_counts_to_metric(st, inv)
-            save(st_metric, event_name, "metric", save_img=False)
-            for tr in st_metric: # save each channel plot separately
-                save(tr, event_name, tr.stats.channel+"_metric",
-                     save_str=False)
+        counter_for_testing += 1
+        print("COUNTER:", counter_for_testing)
+        if counter_for_testing == 10:
+            #counter_for_testing = 0
+            print("Processing stuff...")
+            for fn in processing_fns:
+                start = UTCDateTime()-5-1
+                end = UTCDateTime()-1
+                Thread(target=fn, args=(start, end)).start()
+
+        #for (start, end) in pick_pairs_is_processed:
+        #    print("Processing stuff...")
+        #    for fn in processing_fns:
+        #       Thread(target=fn, args=(start, end)).start()
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
@@ -278,7 +330,7 @@ if __name__ == "__main__":
         axs[0].cla()
         axs[1].cla()
 
-    rt_sl_client.on_data = process_data
+    rt_sl_client.on_data = on_data_callback
     rt_sl_client.run()
 
 
