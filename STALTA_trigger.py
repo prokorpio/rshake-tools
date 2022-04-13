@@ -161,8 +161,8 @@ def save(st, event_name, title, save_img=True, save_str=True):
 
 def convert_counts_to_metric(st, inv):
     stream = st.copy() # make a deepcopy to avoid altering original
-    #vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
-    vel_channels = ["EHE", "EHN", "EHZ", "SHZ", "HHZ"]
+    vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
+    #vel_channels = ["EHE", "EHN", "EHZ", "SHZ", "HHZ"]
     acc_channels = ["ENE", "ENN", "ENZ"]
 
     for tr in stream:
@@ -225,18 +225,18 @@ if __name__ == "__main__":
 
     # get station information
     basic_sl_client = BasicSLClient(args.IP)
-    #channels = basic_sl_client.get_info(level="channel")
-    #for i, channel in enumerate(channels):
-    #    if ("HZ" in channel[3]):
-    #        network = channel[0]
-    #        station = channel[1]
-    #        basis_channel = channel[3]
-    #        break
-    #    elif i == len(channels)-1:
-    #        raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
-    network = "GE"
-    station = "WLF"
-    basis_channel = "HHZ"
+    channels = basic_sl_client.get_info(level="channel")
+    for i, channel in enumerate(channels):
+        if ("HZ" in channel[3]):
+            network = channel[0]
+            station = channel[1]
+            basis_channel = channel[3]
+            break
+        elif i == len(channels)-1:
+            raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
+    #network = "GE"
+    #station = "WLF"
+    #basis_channel = "HHZ"
 
     # create copy of latest inv, remove date so it can be used in remove_response
     inv_dir = "inventories"
@@ -246,8 +246,8 @@ if __name__ == "__main__":
         inv = read_inventory(inv_path)
     else:
         print("downloading inv")
-        rs_client = RS_Client("IRIS")
-        #rs_client = RS_Client("RASPISHAKE")
+        #rs_client = RS_Client("IRIS")
+        rs_client = RS_Client("RASPISHAKE")
         inv = rs_client.get_stations(network=network, station=station, level="RESP")
         latest_station_response = (inv[-1][-1]).copy()
         latest_station_response.start_date = None
@@ -278,8 +278,8 @@ if __name__ == "__main__":
         event_name = "_".join([network, station,
             start.strftime("%y-%m-%dT%H:%M:%S")])
         print("THREAD:", event_name)
-        st = basic_sl_client.get_waveforms(network, station, "*", "HHZ", start, end)
-        #st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
+        #st = basic_sl_client.get_waveforms(network, station, "*", "HHZ", start, end)
+        st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
         print("THREAD:","Downloaded ST")
         save(st, event_name, "counts")
         print("THREAD:","Saved ST")
@@ -301,20 +301,20 @@ if __name__ == "__main__":
         sta_lta = pickWindow.calculate_new_picks(len(tr.data))
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
-        counter_for_testing += 1
-        print("COUNTER:", counter_for_testing)
-        if counter_for_testing == 10:
-            #counter_for_testing = 0
-            print("Processing stuff...")
-            for fn in processing_fns:
-                start = UTCDateTime()-5-1
-                end = UTCDateTime()-1
-                Thread(target=fn, args=(start, end)).start()
-
-        #for (start, end) in pick_pairs_is_processed:
+        #counter_for_testing += 1
+        #print("COUNTER:", counter_for_testing)
+        #if counter_for_testing == 10:
+        #    #counter_for_testing = 0
         #    print("Processing stuff...")
         #    for fn in processing_fns:
-        #       Thread(target=fn, args=(start, end)).start()
+        #        start = UTCDateTime()-5-1
+        #        end = UTCDateTime()-1
+        #        Thread(target=fn, args=(start, end)).start()
+
+        for (start, end) in pick_pairs_to_process:
+            print("Processing stuff...")
+            for fn in processing_fns:
+               Thread(target=fn, args=(start, end)).start()
 
         # plot data
         axs[0].plot(pickWindow.rt_trace.data)
