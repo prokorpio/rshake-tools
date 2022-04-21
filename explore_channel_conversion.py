@@ -6,28 +6,41 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import os
 import numpy as np
+import warnings
 
 #
 def get_PRISM_data(filename):
     with open(filename) as f:
         record = False
+        start_count = False
+        cnt = 0
+        num_to_skip_at_start = 1 # for v1 files
+        if ".V2c" in filename:
+            num_to_skip_at_start = 5
         data = []
         for line in f:
+            if start_count:
+                cnt += 1
             if "End-of-data" in line:
                 record = False
-            if record:
+            if record and (cnt > num_to_skip_at_start):
                 val = float(line.strip())
                 data.append(val)
-            if "   50400 " in line:
+                start_count = False # no need to continuously increment
+            if "<SCNL>" in line:
                 record = True
+                start_count = True
+
+        if len(data) == 0:
+            warnings.warn("No data parsed")
 
         return np.array(data)
 
 # PRISM-processed-data import
-prism_v1_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Mag8.2/prismPROCESSED/CI.15200401/SB.WLA/V1/SB_WLA_HNZ_00_15200401.V1c"
-prism_acc_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Mag8.2/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.acc.V2c"
-prism_vel_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Mag8.2/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.vel.V2c"
-prism_dis_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Mag8.2/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.dis.V2c"
+prism_v1_file  = "/home/sysop/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V1/SB_WLA_HNZ_00_10665149.V1c"
+prism_acc_file = "/home/sysop/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.acc.V2c"
+prism_vel_file = "/home/sysop/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.vel.V2c"
+prism_dis_file = "/home/sysop/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.dis.V2c"
 
 prism_v1 = get_PRISM_data(prism_v1_file)/100
 prism_v1_mean = prism_v1.mean()
@@ -72,7 +85,7 @@ if get_inventory:
         Path(os.path.dirname(inv_path)).mkdir(parents=True, exist_ok=True)
         inv.write(inv_path, format="STATIONXML")
 
-st = read("/home/jeffsanchez/Downloads/cosmos_downloads/Mag8.2/evid_15200401_13519/SB_WLA_HNZ_00_15200401.mseed")
+st = read("/home/sysop/Downloads/cosmos_downloads/Event_3/evid_10665149_4386/SB_WLA_HNZ_00_10665149.msd", format="MSEED")
 target_channel="HNZ"
 counts = st.select(channel=target_channel)[0]
 counts.stats.units = "COUNTS"
@@ -81,8 +94,10 @@ metric_units = "ACC"
 def convert_acc_to_vel_trace(tr):
     tr = tr.copy() # make a deepcopy to avoid altering original
     if tr.stats.units == "ACC":
+        #tr.taper(max_percentage=0.02, max_length=3, side="both", type="cosine") #length=sec
         tr.integrate(method="cumtrapz")
         tr.detrend("demean") # results to velocity relative to mean
+        #tr.detrend("linear") # this might be a better all around detrend
         tr.stats.units = "VEL"
     elif tr.stats.units == "VEL":
         tr.stats.units = "VEL"
@@ -94,13 +109,15 @@ def convert_acc_to_vel_trace(tr):
 def convert_vel_to_dis_trace(tr):
     tr = tr.copy() # make a deepcopy to avoid altering original
     if tr.stats.units == "VEL":
+        #tr.taper(max_percentage=0.02, max_length=3, side="both", type="cosine") #length=sec
         tr.integrate(method="cumtrapz")
         tr.detrend("demean") # results to dis relative to mean
+        #tr.detrend("linear") # this might be a better all around detrend
         tr.stats.units = "DIS"
     elif tr.stats.units == "DIS":
         tr.stats.units = "DIS"
     else:
-        print("Can't convert", tr.stats.units, "to VEL.")
+        print("Can't convert", tr.stats.units, "to DIS.")
 
     return tr
 
@@ -144,121 +161,135 @@ dis_ae = abs(dis.data - prism_dis)
 dis_ae_mean = dis_ae.mean()
 dis_ae_peak = max(abs(dis_ae))
 
+
 # Plot results
 fig, axs = plt.subplots(nrows=4, ncols=3, constrained_layout=True)
+fig.set_size_inches(w=12, h=6)
 
 fig.suptitle(target_channel+" Channel in Metric Units")
 
 # OBSPY PLOT COLUMN
 axs[0][0].set_ylabel("OBSPY\nCounts")
 axs[0][0].plot(counts.data)
-x_text0 = len(counts.data)*0.67
+x_text0 = len(counts.data)*0.65
 y_text0 = max(counts.data)*0.7
 axs[0][0].text(x_text0,y_text0,
             "Mean = {:+.6f}counts\nPeak = {:.6f}counts".format(counts_mean,counts_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+_, _, counts_ymin, counts_ymax = axs[0][0].axis()
 
 axs[1][0].set_ylabel("OBSPY\nAcceleration")
 axs[1][0].plot(acc.data)
-x_text0 = len(acc.data)*0.67
+x_text0 = len(acc.data)*0.65
 y_text0 = max(acc.data)*0.7
 axs[1][0].text(x_text0,y_text0,
             "Mean = {:+.6f}m/s2\nPeak = {:.6f}m/s2".format(acc_mean,acc_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+_, _, acc_ymin, acc_ymax = axs[1][0].axis()
 
 axs[2][0].set_ylabel("OBSPY\nVelocity")
 axs[2][0].plot(vel.data)
-x_text1 = len(vel.data)*0.7
+x_text1 = len(vel.data)*0.65
 y_text1 = max(vel.data)*0.7
 axs[2][0].text(x_text1,y_text1,
             "Mean = {:+.6f}m/s\nPeak = {:.6f}m/s".format(vel_mean,vel_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+_, _, vel_ymin, vel_ymax = axs[2][0].axis()
 
 axs[3][0].set_ylabel("OBSPY\nDisplacement")
 axs[3][0].plot(dis.data)
-x_text2 = len(dis.data)*0.7
+x_text2 = len(dis.data)*0.65
 y_text2 = max(dis.data)*0.7
 axs[3][0].text(x_text2,y_text2,
             "Mean = {:+.6f}m\nPeak = {:.6f}m".format(dis_mean,dis_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+_, _, dis_ymin, dis_ymax = axs[3][0].axis()
 
 # PRISM PLOT COLUMN
 axs[0][1].set_ylabel("PRISM V1\n(scaled counts)")
-axs[0][1].plot(prism_v1.data)
-x_text0 = len(prism_v1.data)*0.67
-y_text0 = max(prism_v1.data)*0.7
+axs[0][1].plot(prism_v1)
+x_text0 = len(prism_v1)*0.65
+y_text0 = max(prism_v1)*0.7
 axs[0][1].text(x_text0,y_text0,
             "Mean = {:+.6f}m/s2\nPeak = {:.6f}m/s2".format(prism_v1_mean,prism_v1_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[0][1].set_ylim([acc_ymin, acc_ymax])
 
 axs[1][1].set_ylabel("PRISM V2\nAcceleration")
 axs[1][1].plot(prism_acc)
-x_text0 = len(prism_acc)*0.67
+x_text0 = len(prism_acc)*0.65
 y_text0 = max(prism_acc)*0.7
 axs[1][1].text(x_text0,y_text0,
             "Mean = {:+.6f}m/s2\nPeak = {:.6f}m/s2".format(prism_acc_mean,prism_acc_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[1][1].set_ylim([acc_ymin, acc_ymax])
 
 axs[2][1].set_ylabel("PRISM V2\nVelocity")
 axs[2][1].plot(prism_vel)
-x_text0 = len(prism_vel)*0.67
+x_text0 = len(prism_vel)*0.65
 y_text0 = max(prism_vel)*0.7
 axs[2][1].text(x_text0,y_text0,
-            "Mean = {:+.6f}m/s2\nPeak = {:.6f}m/s2".format(prism_vel_mean,prism_vel_peak),
+            "Mean = {:+.6f}m/s\nPeak = {:.6f}m/s".format(prism_vel_mean,prism_vel_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[2][1].set_ylim([vel_ymin, vel_ymax])
 
 axs[3][1].set_ylabel("PRISM V2\nDisplacement")
 axs[3][1].plot(prism_dis)
-x_text0 = len(prism_dis)*0.67
+x_text0 = len(prism_dis)*0.65
 y_text0 = max(prism_dis)*0.7
 axs[3][1].text(x_text0,y_text0,
-            "Mean = {:+.6f}m/s2\nPeak = {:.6f}m/s2".format(prism_dis_mean,prism_dis_peak),
+            "Mean = {:+.6f}m\nPeak = {:.6f}m".format(prism_dis_mean,prism_dis_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[3][1].set_ylim([dis_ymin, dis_ymax])
 
 # ABSOLUTE ERRORS COLUMN
-axs[0][2].set_ylabel("OBSPYvsPRISM_V1\nAccel AbsErr")
+axs[0][2].set_ylabel("OBSPY_MSDvsPRISM_V1\nAccel AbsErr")
 axs[0][2].plot(abs(accv1_ae))
-x_text2 = len(accv1_ae)*0.7
-y_text2 = max(accv1_ae)*0.7
+x_text2 = len(accv1_ae)*0.65
+y_text2 = acc_ymax*0.7
 axs[0][2].text(x_text2,y_text2,
-            "Mean = {:+.6f}m\nPeak = {:.6f}m".format(accv1_ae_mean,accv1_ae_peak),
+            "Mean = {:+.6f}m/s2\nPeak = {:.6f}m/s2".format(accv1_ae_mean,accv1_ae_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[0][2].set_ylim([acc_ymin, acc_ymax])
 
 axs[1][2].set_ylabel("OBSPYvsPRISM_V2\nAccel AbsErr")
 axs[1][2].plot(abs(acc_ae))
-x_text2 = len(acc_ae)*0.7
-y_text2 = max(acc_ae)*0.7
+x_text2 = len(acc_ae)*0.65
+y_text2 = acc_ymax*0.7
 axs[1][2].text(x_text2,y_text2,
-            "Mean = {:+.6f}m\nPeak = {:.6f}m".format(acc_ae_mean,acc_ae_peak),
+            "Mean = {:+.6f}m/2\nPeak = {:.6f}m/s2".format(acc_ae_mean,acc_ae_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[1][2].set_ylim([acc_ymin, acc_ymax])
 
 axs[2][2].set_ylabel("OBSPYvsPRISM_V2\nVelocity AbsErr")
 axs[2][2].plot(abs(vel_ae))
-x_text2 = len(vel_ae)*0.7
-y_text2 = max(vel_ae)*0.7
+x_text2 = len(vel_ae)*0.65
+y_text2 = vel_ymax*0.7
 axs[2][2].text(x_text2,y_text2,
-            "Mean = {:+.6f}m\nPeak = {:.6f}m".format(vel_ae_mean,vel_ae_peak),
+            "Mean = {:+.6f}m/s\nPeak = {:.6f}m/s".format(vel_ae_mean,vel_ae_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[2][2].set_ylim([vel_ymin, vel_ymax])
 
-axs[3][2].set_ylabel("OBSPYvsPRISM_V2\nVelocity AbsErr")
+axs[3][2].set_ylabel("OBSPYvsPRISM_V2\nDisp AbsErr")
 axs[3][2].plot(abs(dis_ae))
-x_text2 = len(dis_ae)*0.7
-y_text2 = max(dis_ae)*0.7
+x_text2 = len(dis_ae)*0.65
+y_text2 = dis_ymax*0.7
 axs[3][2].text(x_text2,y_text2,
             "Mean = {:+.6f}m\nPeak = {:.6f}m".format(dis_ae_mean,dis_ae_peak),
             ha="left", va="center",
             bbox=dict(boxstyle="round", fc="white"))
+axs[3][2].set_ylim([dis_ymin, dis_ymax])
 
 
 for row in axs:
