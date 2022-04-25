@@ -9,6 +9,7 @@ import numpy as np
 import warnings
 
 INV_DIR = "inventories"
+event_type = 3
 prism_v1_file  = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V1/SB_WLA_HNZ_00_10665149.V1c"
 prism_acc_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.acc.V2c"
 prism_vel_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.vel.V2c"
@@ -47,12 +48,8 @@ def get_PRISM_data(filename):
         return np.array(data)
 
 def convert_acc_to_vel_trace(tr):
-    tr = tr.copy() # make a deepcopy to avoid altering original
     if tr.stats.units == "ACC":
-        tr.taper(max_percentage=0.3, max_length=10, side="both", type="cosine") #length=sec
-        tr.integrate(method="cumtrapz")
-        #tr.detrend("demean") # results to velocity relative to mean
-        tr.detrend("linear") # this might be a better all around detrend
+        tr = improved_integration(tr)
         tr.stats.units = "VEL"
     elif tr.stats.units == "VEL":
         tr.stats.units = "VEL"
@@ -62,12 +59,8 @@ def convert_acc_to_vel_trace(tr):
     return tr
 
 def convert_vel_to_dis_trace(tr):
-    tr = tr.copy() # make a deepcopy to avoid altering original
     if tr.stats.units == "VEL":
-        tr.taper(max_percentage=0.3, max_length=10, side="both", type="cosine") #length=sec
-        tr.integrate(method="cumtrapz")
-        #tr.detrend("demean") # results to dis relative to mean
-        tr.detrend("linear") # this might be a better all around detrend
+        tr = improved_integration(tr)
         tr.stats.units = "DIS"
     elif tr.stats.units == "DIS":
         tr.stats.units = "DIS"
@@ -82,7 +75,49 @@ def convert_counts_to_metric_trace(tr, metric_units):
         freq = tr.stats.sampling_rate
         tr.remove_response(pre_filt=[0.1, 0.5, 0.95*freq, freq],
                            output=metric_units, water_level=4.5, taper=False)
+        tr = correct_acceleration(tr)
         tr.stats.units = metric_units
+    return tr
+
+def correct_acceleration(tr):
+    tr = tr.copy()
+
+    # remove slew, assumption is stationary
+    tr.detrend("linear")
+
+    # integrate to velocity and detrend acc via velocity's diff'd trend
+    # might not be necessary since linear detrend seems to be enough
+    #vel = improved_integration(tr)
+    #one_fit_coeffs, one_score, _,_,_ = np.polyfit(np.arange(tr.stats.npts),vel.data,1,full=True)
+    #two_fit_coeffs, two_score, _,_,_ = np.polyfit(np.arange(tr.stats.npts),vel.data,2,full=True)
+    #best_fit = np.poly1d(one_fit_coeffs if one_score > two_score else two_fit_coeffs) # make func
+    #diffed_best_fit = np.gradient(best_fit(np.arange(tr.stats.npts)))
+    #tr.data = tr.data - diffed_best_fit
+
+    # Length is based on the the expectation the the data has 15sec pre-event buffer
+    # p (cosine percentage), is set to be similar to prism implementation (they have no p)
+    tr.taper(max_percentage=0.25, max_length=5, side="both", type="cosine", p=1)
+    # no zero padding bc it's only necessary to accomodate cyclic conv property of
+    # inverse FT, when integrating in f-domain
+
+    if event_type == 3:
+        freqmin= 0.5
+        freqmax= 25
+    elif event_type == 2:
+        freqmin= 0.3
+        freqmax= 35
+    else:
+        freqmin= 0.1
+        freqmax= 40
+    tr.filter("bandpass",freqmin=freqmin,freqmax=freqmax) # based on magnitude
+    return tr
+
+def improved_integration(tr):
+    tr = tr.copy()
+    tr.detrend("demean")
+    tr.integrate(method="cumtrapz")
+    tr.detrend("linear") # (mx+b, ie the leakage due to cumtrapz)
+
     return tr
 
 def get_inventory(inv_path, network, station, client_name="IRIS"):
@@ -104,7 +139,6 @@ def get_inventory(inv_path, network, station, client_name="IRIS"):
                 Network(code=network, stations=[latest_station_response])])
         Path(os.path.dirname(inv_path)).mkdir(parents=True, exist_ok=True)
         inv.write(inv_path, format="STATIONXML")
-
     return inv
 
 def compare(prism_files, mseed_file, network, station, channel, plot_results = True):
@@ -313,7 +347,7 @@ def compare(prism_files, mseed_file, network, station, channel, plot_results = T
     return (event_info, instrument_info, prism_peaks, obspy_peaks, mean_abs_errors)
 
 if __name__ == "__main__":
-    print(compare(prism_files, mseed_file, network, station, channel))
+    print(compare(prism_files, mseed_file, network, station, channel, True ))
 
 
 
