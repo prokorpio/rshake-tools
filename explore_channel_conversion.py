@@ -2,6 +2,7 @@ from obspy import read_inventory
 from obspy.core import read
 from obspy.clients.fdsn import Client as RS_Client
 from obspy.core.inventory import Inventory, Network
+from obspy.signal.invsim import estimate_magnitude
 from pathlib import Path
 import matplotlib.pyplot as plt
 import os
@@ -9,13 +10,18 @@ import numpy as np
 import warnings
 
 INV_DIR = "inventories"
-event_type = 3
+event_type = 1
+mseed_file     = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_1/evid_15200401_13519/SB_WLA_HNZ_00_15200401.msd"
+prism_v1_file  = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V1/SB_WLA_HNZ_00_15200401.V1c"
+prism_acc_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.acc.V2c"
+prism_vel_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.vel.V2c"
+prism_dis_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.dis.V2c"
+mseed_file     = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/evid_10665149_4386/SB_WLA_HNZ_00_10665149.msd"
 prism_v1_file  = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V1/SB_WLA_HNZ_00_10665149.V1c"
 prism_acc_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.acc.V2c"
 prism_vel_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.vel.V2c"
 prism_dis_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.dis.V2c"
 prism_files = (prism_v1_file, prism_acc_file, prism_vel_file, prism_dis_file)
-mseed_file = "/home/jeffsanchez/Downloads/cosmos_downloads/Event_3/evid_10665149_4386/SB_WLA_HNZ_00_10665149.msd"
 network = "SB"
 station = "WLA"
 channel = "HNZ"
@@ -73,32 +79,16 @@ def convert_counts_to_metric_trace(tr, metric_units):
     if tr.stats.units == "COUNTS":
         tr = tr.copy()
         freq = tr.stats.sampling_rate
+        #print(estimate_magnitude(inv[0][0][43].response ,max(abs(tr.data)), 0.1, 20))
+        # Note: The following are applied before deconvolution
+        # a bandpass filter
+        # a quarter cosine taper, tapering 0.05 length of data
         tr.remove_response(pre_filt=[0.1, 0.5, 0.95*freq, freq],
-                           output=metric_units, water_level=4.5, taper=False)
-        tr = correct_acceleration(tr)
+                           output=metric_units, water_level=4.5, taper=True, taper_fraction=0.1)
         tr.stats.units = metric_units
     return tr
 
-def correct_acceleration(tr):
-    tr = tr.copy()
-
-    # remove slew, assumption is stationary
-    tr.detrend("linear")
-
-    # integrate to velocity and detrend acc via velocity's diff'd trend
-    # might not be necessary since linear detrend seems to be enough
-    #vel = improved_integration(tr)
-    #one_fit_coeffs, one_score, _,_,_ = np.polyfit(np.arange(tr.stats.npts),vel.data,1,full=True)
-    #two_fit_coeffs, two_score, _,_,_ = np.polyfit(np.arange(tr.stats.npts),vel.data,2,full=True)
-    #best_fit = np.poly1d(one_fit_coeffs if one_score > two_score else two_fit_coeffs) # make func
-    #diffed_best_fit = np.gradient(best_fit(np.arange(tr.stats.npts)))
-    #tr.data = tr.data - diffed_best_fit
-
-    # Length is based on the the expectation the the data has 15sec pre-event buffer
-    # p (cosine percentage), is set to be similar to prism implementation (they have no p)
-    tr.taper(max_percentage=0.25, max_length=5, side="both", type="cosine", p=1)
-    # no zero padding bc it's only necessary to accomodate cyclic conv property of
-    # inverse FT, when integrating in f-domain
+def remove_noise(tr):
 
     if event_type == 3:
         freqmin= 0.5
@@ -109,12 +99,12 @@ def correct_acceleration(tr):
     else:
         freqmin= 0.1
         freqmax= 40
-    tr.filter("bandpass",freqmin=freqmin,freqmax=freqmax) # based on magnitude
+    #tr.filter("bandpass",freqmin=freqmin,freqmax=freqmax) # based on magnitude
     return tr
 
 def improved_integration(tr):
     tr = tr.copy()
-    tr.detrend("demean")
+    tr.detrend("demean") # make sure no constant that will become linear function
     tr.integrate(method="cumtrapz")
     tr.detrend("linear") # (mx+b, ie the leakage due to cumtrapz)
 
