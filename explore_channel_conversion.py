@@ -11,6 +11,8 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import warnings
+import pandas as pd
+
 
 INV_DIR = "inventories"
 event_type = 1
@@ -41,6 +43,29 @@ sta_window = 2
 lta_window = 10
 thresh_on = 1.5
 thresh_off = 1
+
+def select_event(event_type):
+    if event_type == 1:
+        mseed_file     = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_1/evid_15200401_13519/SB_WLA_HNZ_00_15200401.msd"
+        prism_v1_file  = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V1/SB_WLA_HNZ_00_15200401.V1c"
+        prism_acc_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.acc.V2c"
+        prism_vel_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.vel.V2c"
+        prism_dis_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_1/prismPROCESSED/CI.15200401/SB.WLA/V2/SB_WLA_HNZ_00_15200401.dis.V2c"
+    elif event_type == 2:
+        mseed_file     = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_2/evid_14733516_4612/SB_WLA_HNZ_00_14733516.msd"
+        prism_v1_file  = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_2/prismPROCESSED/CI.14733516/SB.WLA/V1/SB_WLA_HNZ_00_14733516.V1c"
+        prism_acc_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_2/prismPROCESSED/CI.14733516/SB.WLA/V2/SB_WLA_HNZ_00_14733516.acc.V2c"
+        prism_vel_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_2/prismPROCESSED/CI.14733516/SB.WLA/V2/SB_WLA_HNZ_00_14733516.vel.V2c"
+        prism_dis_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_2/prismPROCESSED/CI.14733516/SB.WLA/V2/SB_WLA_HNZ_00_14733516.dis.V2c"
+    elif event_type == 3:
+        mseed_file     = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_3/evid_10665149_4386/SB_WLA_HNZ_00_10665149.msd"
+        prism_v1_file  = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V1/SB_WLA_HNZ_00_10665149.V1c"
+        prism_acc_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.acc.V2c"
+        prism_vel_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.vel.V2c"
+        prism_dis_file = "C:/Users/benit/Documents/Python Scripts/cosmos_downloads/Event_3/prismPROCESSED/CI.10665149/SB.WLA/V2/SB_WLA_HNZ_00_10665149.dis.V2c"
+        
+        
+    return (prism_v1_file, prism_acc_file, prism_vel_file, prism_dis_file), mseed_file
 
 def get_PRISM_data(filename):
     with open(filename) as f:
@@ -237,7 +262,7 @@ def compare(prism_files, mseed_file, network, station, channel, plot_results = T
     counts_mean = counts.data.mean()
     counts_peak = max(abs(counts.data))
     acc = convert_counts_to_metric_trace(counts, metric_units)
-    return
+#    return
     acc_mean = acc.data.mean()
     acc_peak = max(abs(acc.data))
     vel = convert_acc_to_vel_trace(acc)
@@ -263,7 +288,7 @@ def compare(prism_files, mseed_file, network, station, channel, plot_results = T
 
     dis_ae = abs(dis.data - prism_dis)
     dis_ae_mean = dis_ae.mean()
-    print(dis_ae_mean)
+#    print(dis_ae_mean)
     dis_ae_peak = max(abs(dis_ae))
 
 
@@ -403,15 +428,60 @@ def compare(prism_files, mseed_file, network, station, channel, plot_results = T
         plt.show()
 
     event_info = () # not yet implemented, parse from cosmos files
-    instrument_info = (network, station, channel)
-    prism_peaks = (prism_acc_peak, prism_vel_peak, prism_dis_peak)
-    obspy_peaks = (acc_peak, vel_peak, dis_peak)
-    mean_abs_errors = (acc_ae_mean, vel_ae_mean, dis_ae_mean)
+    instrument_info = [network, station, channel]
+    prism_peaks = [prism_acc_peak, prism_vel_peak, prism_dis_peak]
+    obspy_peaks = [acc_peak, vel_peak, dis_peak]
+    mean_abs_errors = [acc_ae_mean, vel_ae_mean, dis_ae_mean]
 
     return (event_info, instrument_info, prism_peaks, obspy_peaks, mean_abs_errors)
 
 if __name__ == "__main__":
-    print(compare(prism_files, mseed_file, network, station, channel, True ))
+#    print(compare(prism_files, mseed_file, network, station, channel, True ))
+
+    numEvents = 3
+    sampleDict = {}
+    for event in range(1,numEvents+1):
+        prism_files, mseed_file = select_event(event)
+        allData = compare(prism_files, mseed_file, network, station, channel, False )
+        #event_info, instrument_info, prism_peaks, obspy_peaks, mean_abs_errors = allData
+        sampleDict[event] = allData
+    
+    count = 0
+    prism_peaksAll = []
+    obspy_peaksAll = []
+    mean_abs_errorsAll = []
+    peak_diffAll = []
+    peak_diff_gAll = []
+    for key in sampleDict:
+        prism_peaks = np.array(sampleDict[key][2])
+        obspy_peaks = np.array(sampleDict[key][3])
+        mean_abs_errors = np.array( sampleDict[key][4])
+        peak_diff = np.abs(np.subtract(prism_peaks,obspy_peaks))
+        peak_diff_g = np.abs(np.subtract(prism_peaks,obspy_peaks)/9.81)
+
+        prism_peaksAll.append(prism_peaks)
+        obspy_peaksAll.append(obspy_peaks)
+        mean_abs_errorsAll.append(mean_abs_errors)
+        peak_diffAll.append(peak_diff)
+        peak_diff_gAll.append(peak_diff_g)
+
+    prism_peaksAll = np.array(prism_peaksAll)
+    obspy_peaksAll = np.array(obspy_peaksAll)
+    mean_abs_errorsAll = np.array(mean_abs_errorsAll)
+    peak_diffAll = np.array(peak_diffAll)
+    peak_diff_gAll = np.array(peak_diff_gAll)
 
 
+    for i in range(0,numEvents):
+        d = {
+        'Event' : [1,2,3],
+        'Prism PGA (m/s2)' : prism_peaksAll[:,i],
+        'Obspy PGA (m/s2)' : obspy_peaksAll[:,i],
+        'Peak Diff (m/s2)' : peak_diffAll[:,i],
+        'Peak Difference (g)' : peak_diff_gAll[:,i],
+        'Mean Abs Errors' : mean_abs_errorsAll[:,i]
+        }
 
+        df = pd.DataFrame(data=d)
+        print(df)
+        df.to_csv(r'C:\Users\benit\Documents\Python Scripts\rshake-tools-dev\Prism_Obspy_Table_' + str(i+1) + '.csv',index=False)
