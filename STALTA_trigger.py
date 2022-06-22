@@ -14,13 +14,18 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from obspy import read_inventory
-from obspy.core import UTCDateTime
+from obspy.core import UTCDateTime, Stream
 from obspy.realtime import RtTrace
 from obspy.clients.seedlink.easyseedlink import create_client
 from obspy.clients.seedlink.basic_client import Client as BasicSLClient
 from obspy.clients.fdsn import Client as RS_Client
 from obspy.signal.trigger import trigger_onset
 from obspy.core.inventory import Inventory, Network
+
+from trace_conversion import get_inventory, convert_counts_to_metric_trace \
+                             convert_acc_to_vel_trace, convert_vel_to_dis_trace
+from obspy_rshake_report_final import getIntensity
+from eqAlarm import alarm, intensityConvert
 
 # TODO:
 # parse cmd line args [DONE]
@@ -51,10 +56,6 @@ class PickWindow:
         self.rt_trace = RtTrace(max_length=self.active_window)
         self.pick_pairs_ind = np.empty((0,2), int)
         self.pick_pairs_is_processed = np.empty((0), bool)
-
-        #fig, axs = plt.subplots(2)
-        #self.fig = fig
-        #self.axs = axs
 
     def roll_data(self, tr):
         print("Rolling data")
@@ -159,7 +160,7 @@ def save(st, event_name, title, save_img=True, save_str=True):
         plot_path = os.path.join(target_dir, title +".png")
         st.plot(outfile=plot_path)
 
-def convert_counts_to_metric(st, inv):
+def _convert_counts_to_metric(st, inv):
     stream = st.copy() # make a deepcopy to avoid altering original
     vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
     #vel_channels = ["EHE", "EHN", "EHZ", "SHZ", "HHZ"]
@@ -181,7 +182,7 @@ def convert_counts_to_metric(st, inv):
 
     return stream
 
-def convert_metric_to_disp(st):
+def _convert_metric_to_disp(st):
     stream = st.copy() # make a deepcopy to avoid altering original
     for tr in stream:
         if tr.stats.units == "VEL":
@@ -197,6 +198,16 @@ def convert_metric_to_disp(st):
             print("Can't convert", tr.stats.units, "to DISP.")
 
     return stream
+
+def channel_to_axis(channel):
+    if "HZ" in channel:
+        return "Vertical axis" # geophone, should we indicate?
+    elif "NZ" in channel:
+        return "Vertical axis" # MEMS.
+    elif "NN" in channel:
+        return "North-South axis"# MEMS.
+    elif "NE" in channel:
+        return "East-West axis"# MEMS.
 
 
 if __name__ == "__main__":
@@ -238,27 +249,9 @@ if __name__ == "__main__":
     #station = "WLF"
     #basis_channel = "HHZ"
 
-    # create copy of latest inv, remove date so it can be used in remove_response
     inv_dir = "inventories"
     inv_path = os.path.join(os.getcwd(), inv_dir, network+"_"+station+".xml")
-    if os.path.exists(inv_path):
-        print("reading inv")
-        inv = read_inventory(inv_path)
-    else:
-        print("downloading inv")
-        #rs_client = RS_Client("IRIS")
-        rs_client = RS_Client("RASPISHAKE")
-        inv = rs_client.get_stations(network=network, station=station, level="RESP")
-        latest_station_response = (inv[-1][-1]).copy()
-        latest_station_response.start_date = None
-        latest_station_response.end_date = None
-        for cha in latest_station_response:
-            cha.start_date=None
-            cha.end_date=None
-        inv = Inventory(networks=[ \
-                Network(code=network, stations=[latest_station_response])])
-        Path(os.path.dirname(inv_path)).mkdir(parents=True, exist_ok=True)
-        inv.write(inv_path, format="STATIONXML")
+    inv = get_inventory(inv_path, network, station, client_name = "RASPISHAKE")
 
     # select realtime stream
     rt_sl_client = create_client(args.IP) # client for realtime sl streaming
@@ -269,7 +262,7 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(2) # for visual checking
 
-    def download_convert_save(start, end):
+    def download_convert_detect_save(start, end):
         global basic_sl_client
         global network
         global station
@@ -278,23 +271,65 @@ if __name__ == "__main__":
         event_name = "_".join([network, station,
             start.strftime("%y-%m-%dT%H:%M:%S")])
         print("THREAD:", event_name)
-        #st = basic_sl_client.get_waveforms(network, station, "*", "HHZ", start, end)
         st = basic_sl_client.get_waveforms(network, station, "*", "*", start, end)
         print("THREAD:","Downloaded ST")
+
+        # convert counts to acc
+        acc_st = Stream()
+        for tr in st:
+            counts = tr
+            counts.attach_response(inv)
+            counts.stats.units = "COUNTS"
+            event_onset = get_event_onset(counts) # TODO: Optimize?
+            acc, _, _ = convert_counts_to_metric_trace(counts, "ACC")
+            acc.stats.peak = max(abs(acc.data))
+            acc.stats.intensity_str = getIntensity(acc.stats.peak/9.81)
+            accs.append(acc)
+
+        # check against threshold
+        max_intensity = 0
+        max_channel = "" # channel with max intensity
+        for acc_tr in acc_st:
+            intensity = intensityConvert(acc_tr.stats.intensity_str)
+            if intensity > max_intensity_tmp:
+                max_intensity = intensity
+                max_channel = acc_tr.stats.channel
+
+        if max_intensity >= intensity_threshold:
+            acc_tr = st.select(channel=max_channel)[]
+            vel_tr = convert_acc_to_vel_trace(acc_tr)
+            dis_tr = convert_vel_to_dis_trace(vel_tr)
+
+            intensity_str = acc_tr.stats.intensity_str
+            peak_dis = max(abs(dis_tr))*100 #convert to centimeters
+            axis_str = channel_to_axis(max_channel)
+
+            alarm(intensity_str,peak_dis,axis_str)
+            #Thread(target=alarm(intensity_str,peak_dis,axis_str)).start()
+
+        # convert all acc channels to vel and dis
+        vel_st = Stream()
+        dis_st = Stream()
+        for acc_tr in acc_st:
+            vel_st.append(convert_acc_to_vel_trace(acc_tr))
+            dis_st.append(convert_vel_to_dis_trace(vel_tr))
+
+        # TODO: save report
+
+        # save streams
+        print("THREAD:","Converted ST to metrics")
         save(st, event_name, "counts")
         print("THREAD:","Saved ST")
-        st_metric  = convert_counts_to_metric(st, inv)
-        print("THREAD:","Converted ST to metric")
-        save(st_metric, event_name, "metric")
-        print("THREAD:","Saved ST in metric")
-        st_disp = convert_metric_to_disp(st_metric)
-        print("THREAD:","Converted ST to DISP")
-        save(st_disp, event_name, "DISP")
-        print("THREAD:","Saved ST in DISP")
+        save(acc_st, event_name, "acc")
+        print("THREAD:","Saved ST in acc units")
+        save(vel_st, event_name, "vel")
+        print("THREAD:","Saved ST in vel units")
+        save(dis_st, event_name, "dis")
+        print("THREAD:","Saved ST in dis units")
 
     counter_for_testing = 0
-    processing_fns = [download_convert_save]
-    def on_data_callback(tr):
+    processing_fns = [download_convert_detect_save]
+    def data_packet_rcvd_callback(tr):
         global counter_for_testing
 
         pickWindow.roll_data(tr)
@@ -330,7 +365,7 @@ if __name__ == "__main__":
         axs[0].cla()
         axs[1].cla()
 
-    rt_sl_client.on_data = on_data_callback
+    rt_sl_client.on_data = data_packet_rcvd_callback
     rt_sl_client.run()
 
 

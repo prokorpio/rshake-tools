@@ -1,5 +1,5 @@
 from obspy import read_inventory
-from obspy.core import read
+from obspy.core import read, Stream
 from obspy.clients.fdsn import Client as RS_Client
 from obspy.core.inventory import Inventory, Network
 from obspy.signal.trigger import recursive_sta_lta, trigger_onset, plot_trigger
@@ -188,9 +188,24 @@ def convert_counts_to_metric_trace(tr, metric_units, event_onset=None, limit=Tru
         tr.stats.units = metric_units
     return tr, lowcut, snr
 
+def convert_counts_to_acc(st, inv):
+    """ Convert counts stream to acc stream"""
 
-### FUNCTIONS FOR TESTING & DEVELOPMENT ###
+    stream = st.copy() # make a deepcopy to avoid altering original
+    #vel_channels = ["EHE", "EHN", "EHZ", "SHZ"]
+    #acc_channels = ["ENE", "ENN", "ENZ"]
 
+    accs = Stream()
+    for channel_tr in stream:
+        counts = channel_tr
+        counts.attach_response(inv)
+        counts.stats.units = "COUNTS"
+        event_onset = get_event_onset(counts) # TODO: Optimize?
+        acc, _, _ = convert_counts_to_metric_trace(counts, "ACC")
+        acc.stats.peak = max(abs(acc.data))
+        accs.append(acc)
+
+    return accs
 
 def get_inventory(inv_path, network, station, client_name="IRIS"):
     # create copy of latest inv, remove date so it can be used in remove_response
@@ -212,6 +227,11 @@ def get_inventory(inv_path, network, station, client_name="IRIS"):
         Path(os.path.dirname(inv_path)).mkdir(parents=True, exist_ok=True)
         inv.write(inv_path, format="STATIONXML")
     return inv
+
+
+### FUNCTIONS FOR TESTING & DEVELOPMENT ###
+
+
 
 def get_PRISM_data(filename):
     with open(filename) as f:
