@@ -47,7 +47,7 @@ def convert_vel_to_dis_trace(tr):
 
     return tr
 
-def get_low_corner_freq(tr, window_size, low_power_thresh = 0.0001, noise_type="use_end", plot=False, save_plot=False, plot_info=None, verbose=True):
+def get_low_corner_freq(tr, window_size, low_power_thresh = 0.0001, noise_type="use_end", plot=False, save_plot=False, plot_info=None, verbose=False):
     tr = tr.copy()
 
     if window_size == None:
@@ -85,10 +85,10 @@ def get_low_corner_freq(tr, window_size, low_power_thresh = 0.0001, noise_type="
     nyquist_ind = len(noise_resp)//2
 
     # check snr
+    Pn = np.sum(np.square(noise))/len(noise)
+    Psn = np.sum(np.square(tr.data))/len(tr.data)
+    snr = 10*math.log((Psn-Pn)/Pn,10)
     if verbose:
-        Pn = np.sum(np.square(noise))/len(noise)
-        Psn = np.sum(np.square(tr.data))/len(tr.data)
-        snr = 10*math.log((Psn-Pn)/Pn,10)
         print("Pn =",Pn)
         print("Psn =",Psn)
         print("SNR =",snr)
@@ -156,7 +156,7 @@ def get_low_corner_freq(tr, window_size, low_power_thresh = 0.0001, noise_type="
 
     return lowcut, snr
 
-def convert_counts_to_metric_trace(tr, metric_units, event_onset=None, limit=True, plot=True, plot_info=None, use_mag=False):
+def convert_counts_to_metric_trace(tr, metric_units, event_onset=None, limit=True, plot=False, plot_info=None, use_mag=False):
     if tr.stats.units == "COUNTS":
         tr = tr.copy()
         freq = tr.stats.sampling_rate
@@ -186,6 +186,7 @@ def convert_counts_to_metric_trace(tr, metric_units, event_onset=None, limit=Tru
         #manual butterworth
         tr.data = bandpass(tr.data, lowcut, 0.49*freq, df=freq, corners=4, zerophase=True) # corner is order
         tr.stats.units = metric_units
+        print("trace_conversion: Converted", tr.stats.channel)
     return tr, lowcut, snr
 
 def convert_counts_to_acc(st, inv):

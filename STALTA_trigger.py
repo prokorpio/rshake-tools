@@ -22,8 +22,11 @@ from obspy.clients.fdsn import Client as RS_Client
 from obspy.signal.trigger import trigger_onset
 from obspy.core.inventory import Inventory, Network
 
-from trace_conversion import get_inventory, convert_counts_to_metric_trace \
-                             convert_acc_to_vel_trace, convert_vel_to_dis_trace
+from trace_conversion import (
+    get_inventory, convert_counts_to_metric_trace,
+    convert_acc_to_vel_trace, convert_vel_to_dis_trace,
+    get_event_onset
+)
 from obspy_rshake_report_final import getIntensity
 from eqAlarm import alarm, intensityConvert
 
@@ -199,15 +202,6 @@ def _convert_metric_to_disp(st):
 
     return stream
 
-def channel_to_axis(channel):
-    if "HZ" in channel:
-        return "Vertical axis" # geophone, should we indicate?
-    elif "NZ" in channel:
-        return "Vertical axis" # MEMS.
-    elif "NN" in channel:
-        return "North-South axis"# MEMS.
-    elif "NE" in channel:
-        return "East-West axis"# MEMS.
 
 
 if __name__ == "__main__":
@@ -231,6 +225,7 @@ if __name__ == "__main__":
         help="Length in seconds of maximum data capture before adding buffer.")
     parser.add_argument("--directory", type=str, default="captures",
         help="Target directory for outputs")
+    intensity_threshold = 2
 
     args = parser.parse_args()
 
@@ -284,27 +279,27 @@ if __name__ == "__main__":
             acc, _, _ = convert_counts_to_metric_trace(counts, "ACC")
             acc.stats.peak = max(abs(acc.data))
             acc.stats.intensity_str = getIntensity(acc.stats.peak/9.81)
-            accs.append(acc)
+            acc_st.append(acc)
 
-        # check against threshold
+        # get channel with peak intensity
         max_intensity = 0
         max_channel = "" # channel with max intensity
         for acc_tr in acc_st:
             intensity = intensityConvert(acc_tr.stats.intensity_str)
-            if intensity > max_intensity_tmp:
+            if intensity > max_intensity:
                 max_intensity = intensity
                 max_channel = acc_tr.stats.channel
 
+        # check against threshold
         if max_intensity >= intensity_threshold:
-            acc_tr = st.select(channel=max_channel)[]
+            acc_tr = acc_st.select(channel=max_channel)[0]
             vel_tr = convert_acc_to_vel_trace(acc_tr)
             dis_tr = convert_vel_to_dis_trace(vel_tr)
 
             intensity_str = acc_tr.stats.intensity_str
-            peak_dis = max(abs(dis_tr))*100 #convert to centimeters
-            axis_str = channel_to_axis(max_channel)
+            peak_dis = max(abs(dis_tr.data))*100 #convert to centimeters
 
-            alarm(intensity_str,peak_dis,axis_str)
+            alarm(intensity_str,peak_dis,max_channel)
             #Thread(target=alarm(intensity_str,peak_dis,axis_str)).start()
 
         # convert all acc channels to vel and dis
@@ -313,19 +308,19 @@ if __name__ == "__main__":
         for acc_tr in acc_st:
             vel_st.append(convert_acc_to_vel_trace(acc_tr))
             dis_st.append(convert_vel_to_dis_trace(vel_tr))
+        print("THREAD:","Converted ST to metrics")
 
         # TODO: save report
 
         # save streams
-        print("THREAD:","Converted ST to metrics")
-        save(st, event_name, "counts")
-        print("THREAD:","Saved ST")
-        save(acc_st, event_name, "acc")
-        print("THREAD:","Saved ST in acc units")
-        save(vel_st, event_name, "vel")
-        print("THREAD:","Saved ST in vel units")
-        save(dis_st, event_name, "dis")
-        print("THREAD:","Saved ST in dis units")
+        #save(st, event_name, "counts")
+        #print("THREAD:","Saved ST")
+        #save(acc_st, event_name, "acc")
+        #print("THREAD:","Saved ST in acc units")
+        #save(vel_st, event_name, "vel")
+        #print("THREAD:","Saved ST in vel units")
+        #save(dis_st, event_name, "dis")
+        #print("THREAD:","Saved ST in dis units")
 
     counter_for_testing = 0
     processing_fns = [download_convert_detect_save]
