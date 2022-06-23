@@ -80,8 +80,14 @@ def alarm(intensity, displacement, channel):
     # Create separate threads for alert sounds and dialog box
     alertThread1 = threading.Thread(target=threadSound)
     alertThread1.start()
-    alertThread2 = threading.Thread(target=threadDialog(intensity,displacement,channel))
-    alertThread2.start()
+    root = Tk()
+    root.withdraw()
+    mb.showwarning('! EARTHQUAKE ALERT !',
+                   ('Intensity: %s\nDisplacement: %.2f cm, '+channel) % (intensity,displacement),
+                   parent=root)
+    root.destroy()
+    #alertThread2 = threading.Thread(target=threadDialog(intensity,displacement,channel))
+    #alertThread2.start()
 
     # alertThread1.join()
     # alertThread2.join()

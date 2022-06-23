@@ -162,7 +162,7 @@ def save(st, event_name, title, save_img=True, save_str=True):
 
     if save_img:
         plot_path = os.path.join(target_dir, title +".png")
-        st.plot(outfile=plot_path)
+        st.plot(outfile=plot_path) #TODO: this causes warning issues with matplotlib & threading
 
 def _convert_counts_to_metric(st, inv):
     stream = st.copy() # make a deepcopy to avoid altering original
@@ -222,7 +222,7 @@ if __name__ == "__main__":
         help="Length in seconds where STA/LTA computation should have nonzero values")
     parser.add_argument("--capture_buffer", type=int, default=10,
         help="Buffer in seconds applied to left and right of data capture.")
-    parser.add_argument("--max_evt_len", type=int, default=30,
+    parser.add_argument("--max_evt_len", type=int, default=5,
         help="Length in seconds of maximum data capture before adding buffer.")
     parser.add_argument("--directory", type=str, default="captures",
         help="Target directory for outputs")
@@ -241,9 +241,6 @@ if __name__ == "__main__":
             break
         elif i == len(channels)-1:
             raise RuntimeError("*HZ channel not available in rshake@"+args.IP)
-    #network = "GE"
-    #station = "WLF"
-    #basis_channel = "HHZ"
 
     inv_dir = "inventories"
     inv_path = os.path.join(os.getcwd(), inv_dir, network+"_"+station+".xml")
@@ -256,7 +253,7 @@ if __name__ == "__main__":
     pickWindow = PickWindow(args.sta_window, args.lta_window, args.stalta_window,
                  args.thresh_on, args.thresh_off, args.capture_buffer, args.max_evt_len)
 
-    fig, axs = plt.subplots(2) # for visual checking
+    #fig, axs = plt.subplots(2) # for visual checking
 
     def download_convert_detect_save(start, end):
         global basic_sl_client
@@ -301,7 +298,6 @@ if __name__ == "__main__":
             peak_dis = max(abs(dis_tr.data))*100 #convert to centimeters
 
             alarm(intensity_str,peak_dis,max_channel)
-            #Thread(target=alarm(intensity_str,peak_dis,axis_str)).start()
 
         # convert all acc channels to vel and dis
         vel_st = Stream()
@@ -316,14 +312,14 @@ if __name__ == "__main__":
         # TODO: save report
 
         # save streams
-        #save(st, event_name, "counts")
-        #print("THREAD:","Saved ST")
-        #save(acc_st, event_name, "acc")
-        #print("THREAD:","Saved ST in acc units")
-        #save(vel_st, event_name, "vel")
-        #print("THREAD:","Saved ST in vel units")
-        #save(dis_st, event_name, "dis")
-        #print("THREAD:","Saved ST in dis units")
+        save(st, event_name, "counts")
+        print("THREAD:","Saved ST")
+        save(acc_st, event_name, "acc")
+        print("THREAD:","Saved ST in acc units")
+        save(vel_st, event_name, "vel")
+        print("THREAD:","Saved ST in vel units")
+        save(dis_st, event_name, "dis")
+        print("THREAD:","Saved ST in dis units")
 
     counter_for_testing = 0
     processing_fns = [download_convert_detect_save]
@@ -334,34 +330,25 @@ if __name__ == "__main__":
         sta_lta = pickWindow.calculate_new_picks(len(tr.data))
         pick_pairs_to_process = pickWindow.get_processable_picks()
 
-        #counter_for_testing += 1
-        #print("COUNTER:", counter_for_testing)
-        #if counter_for_testing == 10:
-        #    #counter_for_testing = 0
-        #    print("Processing stuff...")
-        #    for fn in processing_fns:
-        #        start = UTCDateTime()-5-1
-        #        end = UTCDateTime()-1
-        #        Thread(target=fn, args=(start, end)).start()
-
         for (start, end) in pick_pairs_to_process:
-            print("Processing stuff...")
+            print("Processing stuff...") #NOTE: STALTA 'end' is waited before processing
+                                         #      is commenced. 
             for fn in processing_fns:
                Thread(target=fn, args=(start, end)).start()
 
         # plot data
-        axs[0].plot(pickWindow.rt_trace.data)
-        axs[1].plot(sta_lta)
+        #axs[0].plot(pickWindow.rt_trace.data)
+        #axs[1].plot(sta_lta)
 
-        # plot triggers on ratio
-        y_min, y_max = axs[1].get_ylim()
-        axs[1].vlines(pickWindow.pick_pairs_ind[:,0], y_min, y_max, color='r', lw=2)
-        axs[1].vlines(pickWindow.pick_pairs_ind[:,1], y_min, y_max, color='b', lw=2)
+        ### plot triggers on ratio
+        #y_min, y_max = axs[1].get_ylim()
+        #axs[1].vlines(pickWindow.pick_pairs_ind[:,0], y_min, y_max, color='r', lw=2)
+        #axs[1].vlines(pickWindow.pick_pairs_ind[:,1], y_min, y_max, color='b', lw=2)
 
-        fig.canvas.draw_idle()
-        plt.pause(0.0001)
-        axs[0].cla()
-        axs[1].cla()
+        #fig.canvas.draw_idle()
+        #plt.pause(0.0001)
+        #axs[0].cla()
+        #axs[1].cla()
 
     rt_sl_client.on_data = data_packet_rcvd_callback
     rt_sl_client.run()
