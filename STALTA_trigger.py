@@ -35,6 +35,7 @@ from eqAlarm import alarm, intensityConvert
 # create sub functions [DONE]
 # create automatic folder creation [DONE]
 # capture all channels [DONE]
+# organize functions
 # fix print statements
 # handle dropped packets
 
@@ -306,8 +307,10 @@ if __name__ == "__main__":
         vel_st = Stream()
         dis_st = Stream()
         for acc_tr in acc_st:
-            vel_st.append(convert_acc_to_vel_trace(acc_tr))
-            dis_st.append(convert_vel_to_dis_trace(vel_tr))
+            vel_tr = convert_acc_to_vel_trace(acc_tr)
+            dis_tr = convert_vel_to_dis_trace(vel_tr)
+            vel_st.append(vel_tr)
+            dis_st.append(dis_tr)
         print("THREAD:","Converted ST to metrics")
 
         # TODO: save report
