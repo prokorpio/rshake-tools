@@ -1,7 +1,12 @@
 from pubsub.pubsub import PubSub
 from SLclient import SLclient
+from RollingStream import RollingStream
+
+import threading
 
 #TODO: get configs
+# rshake IP
+# buffer length : 30sec
 
 def main():
     # get configs
@@ -12,12 +17,25 @@ def main():
 
     # create link to rshake
     SL_client = SLclient(message_board, IP)
-    SL_client.start()
 
-    # create subscribers
-    messages = message_board.subscribe(SL_client.topic)
-    for message in messages.listen():
-        print("RECEIVED: id=", message['id'], " data=", message['data'], " qsize=",messages.qsize(), sep='')
+    # create receiving stream
+    rt_stream = RollingStream(["EHZ", "ENN", "ENE", "ENZ"], channel_length=40*100)
+
+    # subscribe
+    message_queue = message_board.subscribe(SL_client.topic)
+
+    # start
+    SL_client.start()
+    for message in message_queue.listen():
+        tr = message['data']
+        print("RECEIVED: id=", message['id'], " data=", message['data'], " qsize=",message_queue.qsize(), sep='')
+        rt_stream.update_trace(tr)
+        if len(rt_stream.traces[0]) > 3000:
+            latest_traces = rt_stream.latest_traces(duration=30)
+            for tr in latest_traces:
+                print(tr)
+            message_board.unsubscribe("RE722_TRACES", message_queue)
+            break
 
     # wait for all threads to exit gracefully
     SL_client.join()
