@@ -1,16 +1,18 @@
 from pubsub.pubsub import PubSub
 from SLclient import SLclient
 from RollingStream import RollingStream
+from DetectSpike import DetectSpike
 
-import threading
-
-#TODO: get configs
-# rshake IP
-# buffer length : 30sec
 
 def main():
-    # get configs
-    IP = "192.168.1.21"
+    # TODO: get configs
+    IP = "192.168.1.21" # rshake IP
+    DUR = 30 # duration in sec (for plotting and other processes)
+    STA_SEC = 2
+    LTA_SEC = 15
+    ON_THRESH = 3.0
+    OFF_THRESH = 1.5
+    MAX_EVT_DUR = 20 # max duration of on-thresh to off-thresh in sta/lta
 
     # create communication link between threads
     message_board = PubSub(max_queue_in_a_channel=100)
@@ -18,27 +20,26 @@ def main():
     # create link to rshake
     SL_client = SLclient(message_board, IP)
 
-    # create receiving stream
-    rt_stream = RollingStream(["EHZ", "ENN", "ENE", "ENZ"], channel_length=40*100)
+    # create spike detector
+    Picker = DetectSpike(
+        message_board,
+        SL_client.station, SL_client.channels, SL_client.sps,
+        STA_SEC, LTA_SEC, ON_THRESH, OFF_THRESH, MAX_EVT_DUR,
+        DUR
+    )
 
-    # subscribe
-    message_queue = message_board.subscribe(SL_client.topic)
+    # subscribe to spike detector pick messages
+    message_queue = message_board.subscribe(Picker.dst_topic)
 
     # start
     SL_client.start()
+    Picker.start()
     for message in message_queue.listen():
-        tr = message['data']
         print("RECEIVED: id=", message['id'], " data=", message['data'], " qsize=",message_queue.qsize(), sep='')
-        rt_stream.update_trace(tr)
-        if len(rt_stream.traces[0]) > 3000:
-            latest_traces = rt_stream.latest_traces(duration=30)
-            for tr in latest_traces:
-                print(tr)
-            message_board.unsubscribe("RE722_TRACES", message_queue)
-            break
 
     # wait for all threads to exit gracefully
     SL_client.join()
+    Picker.join()
 
 
 if __name__ == "__main__":

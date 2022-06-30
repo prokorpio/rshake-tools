@@ -15,12 +15,17 @@ class RollingStream:
             self.traces[-1].stats.channel = channel
 
     def update_trace(self, tr):
+        """ Update a single trace and return a copy """
+
         for rt_tr in self.traces:
             if rt_tr.stats.channel == tr.stats.channel:
                 rt_tr.append(tr)
+                return rt_tr.copy()
 
 
     def latest_traces(self, duration):
+        """ Get a duration of the latest values of all traces """
+
         # get earliest endtime
         earliest_endtime = self.traces[0].stats.endtime
         for tr in self.traces:
