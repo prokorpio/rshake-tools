@@ -25,6 +25,22 @@ def improved_integration(tr):
 
     return tr
 
+def improved_differentiation(tr):
+    tr = tr.copy()
+    #TODO: implement this
+    return tr
+
+def convert_vel_to_acc_trace(tr):
+    if tr.stats.units == "ACC":
+        tr.stats.units = "ACC"
+    elif tr.stats.units == "VEL":
+        tr = improved_differentiation(tr)
+        tr.stats.units = "ACC"
+    else:
+        print("Can't convert", tr.stats.units, "to ACC.")
+
+    return tr
+
 def convert_acc_to_vel_trace(tr):
     if tr.stats.units == "ACC":
         tr = improved_integration(tr)
@@ -186,7 +202,7 @@ def convert_counts_to_metric_trace(tr, metric_units, event_onset=None, limit=Tru
         #manual butterworth
         tr.data = bandpass(tr.data, lowcut, 0.49*freq, df=freq, corners=4, zerophase=True) # corner is order
         tr.stats.units = metric_units
-        print("trace_conversion: Converted", tr.stats.channel)
+        #print("trace_conversion: Converted", tr.stats.channel)
     return tr, lowcut, snr
 
 def convert_counts_to_acc(st, inv):

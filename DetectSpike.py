@@ -25,12 +25,14 @@ class DetectSpike(threading.Thread):
             - duration: max_length in seconds of traces to be processed
         """
 
-        # prepare station info and thread attribs
+        # prepare thread info
+        self.thread_name = self.__class__.__name__ + ":" + station
+        threading.Thread.__init__(self, name=self.thread_name)
+
+        # prepare station info
         self.station = station
         self.channels = channels
         self.sps = sps
-        self.thread_name = self.__class__.__name__ + ":" + self.station
-        threading.Thread.__init__(self, name=self.thread_name)
 
         # prepare source of realtime rolling data
         self.duration = duration
@@ -38,14 +40,14 @@ class DetectSpike(threading.Thread):
         self.rt_stream = RollingStream(self.channels, self.channel_length)
 
         # prepare STA/LTA params
-        self.sta_sec, self.sta_len = sta_sec, sta_sec*self.sps
-        self.lta_sec, self.lta_len = lta_sec, lta_sec*self.sps
-        self.max_evt_dur, self.max_evt_len = max_evt_dur, max_evt_dur*self.sps
+        self.sta_sec, self.sta_len = sta_sec, sta_sec*sps
+        self.lta_sec, self.lta_len = lta_sec, lta_sec*sps
+        self.max_evt_dur, self.max_evt_len = max_evt_dur, max_evt_dur*sps
         self.on_thresh = on_thresh
         self.off_thresh = off_thresh
 
         # prepare pub/sub comms
-        self.src_topic = self.station.upper() + "_" + "TRACES"
+        self.src_topic = station.upper() + "_" + "TRACES"
         self.dst_topic = "PICKS"
         self.message_board = message_board
 
@@ -54,7 +56,7 @@ class DetectSpike(threading.Thread):
 
             Parameters:
             - tr: trace to get picks from
-            - prev_pick: UTCDateTime of previously computed pick-pair
+            - prev_pick: channel and UTCDateTime of previously computed pick
         """
 
         # len(tr) must allow for calculation of pick-pair with dur=max_evt_dur
@@ -78,7 +80,7 @@ class DetectSpike(threading.Thread):
         if len(pick_pair_ind_tmp) > 0:
             latest_pair = pick_pair_ind_tmp[-1] # only process latest
             last_sample_ind = data_len_to_pick - 1
-            if (latest_pair[1] != last_sample_ind) \
+            if (latest_pair[1] < last_sample_ind) \
                 and (data_to_pick[latest_pair[1]+1] < self.off_thresh):
 
                 # convert ind_tmp to ind on sta_lta
@@ -90,9 +92,13 @@ class DetectSpike(threading.Thread):
                 off_pick_t = UTCDateTime(start_t + latest_pair[1]/self.sps, precision=0)
 
                 # check if new
-                prev_on_pick, prev_off_pick = prev_pick
-                if (on_pick_t != prev_on_pick) and (off_pick_t != prev_off_pick):
-                    return (on_pick_t, off_pick_t)
+                prev_channel, prev_on_pick, prev_off_pick = prev_pick
+                curr_channel = tr.stats.channel # ensure all channel can be picked
+                if (curr_channel != prev_channel) \
+                   and (on_pick_t != prev_on_pick) \
+                   and (off_pick_t != prev_off_pick):
+
+                    return (curr_channel, on_pick_t, off_pick_t)
                 else:
                     return None
 
@@ -101,8 +107,8 @@ class DetectSpike(threading.Thread):
 
 
     def run(self):
-        # init vars
-        queue = self.message_board.subscribe(self.src_topic) # subscribe to source of data
+        traces_queue = self.message_board.subscribe(self.src_topic) # subscribe to source of data
+        prev_channel = ""
         prev_on_pick = UTCDateTime(0,precision=0)
         prev_off_pick = UTCDateTime(0,precision=0)
 
@@ -111,27 +117,29 @@ class DetectSpike(threading.Thread):
             updated_tr = None
 
             # read all available data,
-            # assumes it doesn't become longer than self.duration...
-            for message in queue.listen():
-                print(self.thread_name, " RECEIVED: ", message['data'], " qsize: ", queue.qsize(),sep='')
+            # NOTE: this assumes it doesn't become longer than self.duration...
+            for message in traces_queue.listen():
+                #print(self.thread_name, " RECEIVED: ", message['data'], " qsize: ", traces_queue.qsize(),sep='')
                 additional_tr = message['data']
                 updated_tr = self.rt_stream.update_trace(additional_tr)
 
-                if queue.qsize() == 0:
+                if traces_queue.qsize() == 0:
                     break
 
             # get picks from newly updated trace
             if updated_tr is not None:
-                pick_pair = self._get_STALTA_pick_pairs(updated_tr, (prev_on_pick, prev_off_pick))
-                if pick_pair is not None:
+                pick = self._get_STALTA_pick_pairs(updated_tr, \
+                            (prev_channel, prev_on_pick, prev_off_pick))
+                if pick is not None:
                     #publish
                     pick_object = {
-                        "channel": updated_tr.stats.channel,\
-                        "on_time": pick_pair[0], \
-                        "off_time": pick_pair[1],
+                        "channel": pick[0],
+                        "on_time": pick[1], \
+                        "off_time": pick[2],
                     }
                     self.message_board.publish(self.dst_topic, pick_object)
 
                     # record latest pick
-                    prev_on_pick = pick_pair[0]
-                    prev_off_pick = pick_pair[1]
+                    prev_channel = pick_object['channel']
+                    prev_on_pick = pick_object['on_time']
+                    prev_off_pick = pick_object['off_time']
