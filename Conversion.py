@@ -7,7 +7,7 @@ from helpers import (
     save_mseed,
     save_json,
 )
-from trace_conversion import (
+from conversion_helpers import (
     convert_counts_to_metric_trace,
     convert_acc_to_vel_trace,
     convert_vel_to_acc_trace,
