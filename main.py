@@ -5,10 +5,12 @@ from DetectSpike import DetectSpike
 from Conversion import Conversion
 from obspy.core import read
 
+from eqAlarm import alarm
+
 
 def main():
     # TODO: get configs from configs file
-    IP = "192.168.1.21" # rshake IP
+    IP = "rs.local"#"192.168.1.21" # rshake IP
     DUR = 30 # duration in sec (for plotting and other processes)
     STA_SEC = 2 # length of data in seconds to get short-term-ave
     LTA_SEC = 15 # length of data in seconds to get long-term-ave
@@ -44,7 +46,8 @@ def main():
         INV_DIR, CAP_DIR
     )
 
-    # subscribe to spike detector pick messages
+    # subscribe message queues
+    picks_queue = message_board.subscribe(Picker.dst_topic)
     event_summary_queue = message_board.subscribe(Converter.dst_event_summary_topic)
     event_data_queue = message_board.subscribe(Converter.dst_event_data_topic)
 
@@ -53,12 +56,26 @@ def main():
     Picker.start()
     Converter.start()
     while True:
+        for pick in picks_queue.listen():
+            print("MAIN: ", "RECEIVED PICK: id=", pick['id'], " data=", pick['data'], " qsize=", picks_queue.qsize(), sep='')
+            if picks_queue.qsize() == 0:
+                break
+
         for summary in event_summary_queue.listen():
-            print("MAIN: ", "RECEIVED: id=", summary['id'], " data=", summary['data'], " qsize=", event_summary_queue.qsize(), sep='')
+            print("MAIN: ", "RECEIVED EVT: id=", summary['id'], " data=", summary['data'], " qsize=", event_summary_queue.qsize(), sep='')
+            intensity = summary['data']['intensity']
+            PGA = summary['data']['PGA']
+            PGA_channel = summary['data']['PGA_channel']
+            PGD = summary['data']['PGD']
+            PGD_channel = summary['data']['PGD_channel']
+
+            alarm(intensity, PGD*100, PGD_channel, PGA*100, PGA_channel) # convert to cm
+
             if event_summary_queue.qsize() == 0:
                 break
+
         for dirpath in event_data_queue.listen():
-            print("MAIN: ", "RECEIVED: id=", dirpath['id'], " data=", dirpath['data'], " qsize=", event_summary_queue.qsize(), sep='')
+            print("MAIN: ", "RECEIVED EVT-DATA: id=", dirpath['id'], " data=", dirpath['data'], " qsize=", event_data_queue.qsize(), sep='')
             directory = dirpath['data']['path']
             for unit in ["acc", "dis", "counts", "metric", "vel"]:
                 st = read(directory + "/" + unit + ".mseed")

@@ -56,15 +56,15 @@ def threadSound(): #thread for playing alert sound
         play(AudioSegment.from_mp3("eq_displacement.mp3"))
         time.sleep(1)
 
-def threadDialog(intensity,displacement,channel): # thread for displaying alert box
+def threadDialog(intensity,displacement,channel, PGA, PGA_channel): # thread for displaying alert box
     root = Tk()
     root.withdraw()
     mb.showwarning('! EARTHQUAKE ALERT !',
-                   ('Intensity: %s\nDisplacement: %.2f cm, '+channel) % (intensity,displacement),
+                   ('Intensity: %s\nDisplacement: %.2f cm, '+channel+'\nAcceleration: %.2f cm/s2, '+PGA_channel) % (intensity,displacement,PGA),
                    parent=root)
     root.destroy()
 
-def alarm(intensity, displacement, channel):
+def alarm(intensity, disp, channel, PGA, PGA_channel):
     # Convert intensity string into number
     intensityNum = intensityConvert(intensity)
     # create audio file for intensity
@@ -74,20 +74,21 @@ def alarm(intensity, displacement, channel):
         myobj = gTTS(text="Attention! Earthquake detected at intensity %.0f" % intensityNum, lang="en", slow=False)
     myobj.save("./eq_intensity.mp3")
     # create audio file for displacement
-    myobj = gTTS(text=("Displacement is %.2f centimeters along"+channel_to_axis(channel)) % displacement, lang="en", slow=False)
+    myobj = gTTS(text=("Displacement is %.2f centimeters along "+channel_to_axis(channel) \
+                        +", and acceleration is %.2f centimeters per second-squared along "+channel_to_axis(PGA_channel)) % (disp, PGA), lang="en", slow=False)
     myobj.save("./eq_displacement.mp3")
 
     # Create separate threads for alert sounds and dialog box
     alertThread1 = threading.Thread(target=threadSound)
     alertThread1.start()
-    root = Tk()
-    root.withdraw()
-    mb.showwarning('! EARTHQUAKE ALERT !',
-                   ('Intensity: %s\nDisplacement: %.2f cm, '+channel) % (intensity,displacement),
-                   parent=root)
-    root.destroy()
-    #alertThread2 = threading.Thread(target=threadDialog(intensity,displacement,channel))
-    #alertThread2.start()
+    #root = Tk()
+    #root.withdraw()
+    #mb.showwarning('! EARTHQUAKE ALERT !',
+    #               ('Intensity: %s\nDisplacement: %.2f cm, '+channel) % (intensity,displacement),
+    #               parent=root)
+    #root.destroy()
+    alertThread2 = threading.Thread(target=threadDialog, args=(intensity,disp,channel, PGA, PGA_channel))
+    alertThread2.start()
 
     # alertThread1.join()
     # alertThread2.join()
