@@ -125,8 +125,8 @@ def alarm(intensity, disp, channel, PGA, PGA_channel):
         myobj = gTTS(text="Attention! Earthquake detected at intensity %.0f" % intensityNum, lang="en", slow=False)
     myobj.save("./eq_intensity.mp3")
     # create audio file for displacement
-    myobj = gTTS(text=("Displacement is %.2f centimeters along "+channel_to_axis(channel) \
-                        +", and acceleration is %.2f centimeters per second-squared along "+channel_to_axis(PGA_channel)) % (disp, PGA), lang="en", slow=False)
+    myobj = gTTS(text=("Peak displacement is %.2f centimeters along "+channel_to_axis(channel) \
+                        +", and peak acceleration is %.2f centimeters-per-second-squared along "+channel_to_axis(PGA_channel)) % (disp, PGA), lang="en", slow=False)
     myobj.save("./eq_displacement.mp3")
 
     # Create separate threads for alert sounds and dialog box
