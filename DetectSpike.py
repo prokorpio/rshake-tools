@@ -56,7 +56,7 @@ class DetectSpike(threading.Thread):
 
             Parameters:
             - tr: trace to get picks from
-            - prev_pick: channel and UTCDateTime of previously computed pick
+            - prev_pick: UTCDateTimes of previously computed pick for this tr.channel
         """
 
         # len(tr) must allow for calculation of pick-pair with dur=max_evt_dur
@@ -72,6 +72,7 @@ class DetectSpike(threading.Thread):
         data_to_pick = sta_lta[-data_len_to_pick:]
         pick_pair_ind_tmp = trigger_onset(data_to_pick,
                             self.on_thresh, self.off_thresh, self.max_evt_len)
+        #print(self.thread_name, "pairs from", tr.stats.channel, ":", pick_pair_ind_tmp)
 
         # What happens if an event window is split between two batches?
         # tOff is taken to be at the last sample of the array despite
@@ -92,13 +93,14 @@ class DetectSpike(threading.Thread):
                 off_pick_t = UTCDateTime(start_t + latest_pair[1]/self.sps, precision=0)
 
                 # check if new
-                prev_channel, prev_on_pick, prev_off_pick = prev_pick
-                curr_channel = tr.stats.channel # ensure all channel can be picked
-                if (curr_channel != prev_channel) \
-                   and (on_pick_t != prev_on_pick) \
+                prev_on_pick, prev_off_pick = prev_pick
+                #print("channel:", tr.stats.channel)
+                #print("old_pick:", prev_on_pick, prev_off_pick)
+                #print("new_pick:", on_pick_t, off_pick_t)
+                if (on_pick_t != prev_on_pick) \
                    and (off_pick_t != prev_off_pick):
 
-                    return (curr_channel, on_pick_t, off_pick_t)
+                    return (on_pick_t, off_pick_t)
                 else:
                     return None
 
@@ -108,38 +110,42 @@ class DetectSpike(threading.Thread):
 
     def run(self):
         traces_queue = self.message_board.subscribe(self.src_topic) # subscribe to source of data
-        prev_channel = ""
-        prev_on_pick = UTCDateTime(0,precision=0)
-        prev_off_pick = UTCDateTime(0,precision=0)
+        prev_channel_picks = {ch: (UTCDateTime(0, precision=0), UTCDateTime(0, precision=0)) \
+                for ch in self.channels}
+        #prev_channel = ""
+        #prev_on_pick = UTCDateTime(0,precision=0)
+        #prev_off_pick = UTCDateTime(0,precision=0)
 
         # start
-        while True:
+        #while True:
+        #    updated_tr = None
+
+        # read all available data,
+        # NOTE: this assumes it doesn't become longer than self.duration...
+        for message in traces_queue.listen():
             updated_tr = None
-
-            # read all available data,
-            # NOTE: this assumes it doesn't become longer than self.duration...
-            for message in traces_queue.listen():
-                #print(self.thread_name, " RECEIVED: ", message['data'], " qsize: ", traces_queue.qsize(),sep='')
-                additional_tr = message['data']
-                updated_tr = self.rt_stream.update_trace(additional_tr)
-
-                if traces_queue.qsize() == 0:
-                    break
+            #print(self.thread_name, " RECEIVED TR: ", message['data'], " qsize: ", traces_queue.qsize(),sep='')
+            additional_tr = message['data']
+            updated_tr = self.rt_stream.update_trace(additional_tr)
 
             # get picks from newly updated trace
             if updated_tr is not None:
+                ch = updated_tr.stats.channel
                 pick = self._get_STALTA_pick_pairs(updated_tr, \
-                            (prev_channel, prev_on_pick, prev_off_pick))
+                        prev_channel_picks[ch])
                 if pick is not None:
                     #publish
                     pick_object = {
-                        "channel": pick[0],
-                        "on_time": pick[1], \
-                        "off_time": pick[2],
+                        "channel": ch,
+                        "on_time": pick[0], \
+                        "off_time": pick[1],
                     }
                     self.message_board.publish(self.dst_topic, pick_object)
+                    #print(self.thread_name, " PUBLISHED PICK: ", message['data'], " qsize: ", traces_queue.qsize(),sep='')
 
-                    # record latest pick
-                    prev_channel = pick_object['channel']
-                    prev_on_pick = pick_object['on_time']
-                    prev_off_pick = pick_object['off_time']
+                    # record latest pick for this channel
+                    prev_channel_picks[pick_object['channel']] = (pick_object["on_time"], pick_object["off_time"])
+
+            #if traces_queue.qsize() == 0:
+            #    break
+
