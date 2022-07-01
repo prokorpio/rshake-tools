@@ -87,7 +87,7 @@ def save_mseed(st, title, target_dir):
 
 def save_json(dic, title, target_dir):
     Path(target_dir).mkdir(parents=True, exist_ok=True)
-    json_path = os.path.join(target_dir, title +".mseed")
+    json_path = os.path.join(target_dir, title +".json")
     with open(json_path, 'w') as fp:
         json.dump(dic, fp)
 

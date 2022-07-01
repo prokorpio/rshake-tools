@@ -149,10 +149,10 @@ class Conversion(threading.Thread):
                 pick_msgs.append(*tmp)
             if len(pick_msgs) > 0:
                 message = pick_msgs.pop(0)
-                print(self.thread_name, " RECEIVED: ", message['data'], " qsize: ", picks_queue.qsize(),sep='')
+                print(self.thread_name, " RECEIVED: PICK", message['data'], " qsize: ", picks_queue.qsize(),sep='')
 
                 pick = message['data']
-                # NOTE: Only trigger base on picks from basis_channel
+                # NOTE: Only trigger processing base on picks from basis_channel
                 #       to avoid picks from same event triggering multiple
                 #       conversions. However, max pga is taken across all
                 #       channels.
@@ -211,21 +211,21 @@ class Conversion(threading.Thread):
                         report = {
                             "Event name": event_name,
                             "Detection time": str(pick["on_time"]),
+                            "Intensity": max_intensity_str,
                             "PGA": max_pga,
                             "PGA_channel": max_pga_channel,
-                            "intensity": max_intensity_str,
                             "PGD": max_pgd,
                             "PGD_channel": max_pgd_channel,
-                            "Channel Peak Accel's " + str([ch for ch in self.channels]): \
-                                [a.stats.peak for a in acc_st],
-                            "Channel Peak Velo's " + str([ch for ch in self.channels]): \
-                                [v.stats.peak for v in vel_st],
-                            "Channel Peak Disp's " + str([ch for ch in self.channels]): \
-                                [d.stats.peak for d in dis_st],
+                            "Channel Peak Accel's (m/s*s)": \
+                                {a.stats.channel:a.stats.peak for a in acc_st},
+                            "Channel Peak Velo's (m/s)": \
+                                {v.stats.channel:v.stats.peak for v in vel_st},
+                            "Channel Peak Disp's (m)": \
+                                {d.stats.channel:d.stats.peak for d in dis_st},
                         }
 
                         # write all to files
-                        _ = save_json(report, "event_summary.json", dir_path)
+                        _ = save_json(report, "event_summary", dir_path)
                         _ = save_mseed(Stream(traces), "counts", dir_path)
                         _ = save_mseed(metric_st, "metric", dir_path)
                         _ = save_mseed(acc_st, "acc", dir_path)
