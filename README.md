@@ -4,9 +4,11 @@
 
     `git clone --recurse-submodules --branch pubsub-dev git@github.com:prokorpio/rshake-tools.git`
 
-2. Create a virtual python environment
+2. Create and activate a virtual python environment
 
     `python3 -m venv .venv`
+
+    `source .venv/bin/activate`
 
 3. Install dependencies
 
