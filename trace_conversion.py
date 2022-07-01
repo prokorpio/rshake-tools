@@ -25,16 +25,17 @@ def improved_integration(tr):
 
     return tr
 
-def improved_differentiation(tr):
+def differentiate(tr):
     tr = tr.copy()
-    #TODO: implement this
+    tr.differentiate(method="gradient")
+
     return tr
 
 def convert_vel_to_acc_trace(tr):
     if tr.stats.units == "ACC":
         tr.stats.units = "ACC"
     elif tr.stats.units == "VEL":
-        tr = improved_differentiation(tr)
+        tr = differentiate(tr)
         tr.stats.units = "ACC"
     else:
         print("Can't convert", tr.stats.units, "to ACC.")
