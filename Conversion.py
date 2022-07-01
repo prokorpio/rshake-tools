@@ -186,7 +186,7 @@ class Conversion(threading.Thread):
 
                         # get PGD
                         max_pgd = 0
-                        for dis_tr in acc_st:
+                        for dis_tr in dis_st:
                             if dis_tr.stats.peak > max_pgd:
                                 max_pgd = dis_tr.stats.peak
                                 max_pgd_channel = dis_tr.stats.channel
