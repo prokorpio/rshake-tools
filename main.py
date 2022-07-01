@@ -1,11 +1,13 @@
 from pubsub.pubsub import PubSub
+
 from SLclient import SLclient
 from RollingStream import RollingStream
 from DetectSpike import DetectSpike
 from Conversion import Conversion
+from helpers import alarm
+
 from obspy.core import read
 
-from eqAlarm import alarm
 
 
 def main():

@@ -1,8 +1,15 @@
 from obspy import read_inventory
 from obspy.clients.fdsn import Client as RS_Client
 from obspy.core.inventory import Inventory, Network
+from gtts import gTTS
+from pydub import AudioSegment
+from pydub.playback import play
+from tkinter import *
+from tkinter import messagebox as mb
 from pathlib import Path
+import threading
 import json
+import time
 import os
 
 def get_inventory(inv_dir, network, station, client_name="RASPISHAKE"):
@@ -44,6 +51,21 @@ def g_to_intensity(g): # Gets intensity from PGA
             intensity = intensity_scale[i]
     return intensity
 
+def save_mseed(st, title, target_dir):
+    Path(target_dir).mkdir(parents=True, exist_ok=True)
+    mseed_path = os.path.join(target_dir, title +".mseed")
+    st.write(mseed_path, format="MSEED", reclen=512)
+
+    return mseed_path
+
+def save_json(dic, title, target_dir):
+    Path(target_dir).mkdir(parents=True, exist_ok=True)
+    json_path = os.path.join(target_dir, title +".json")
+    with open(json_path, 'w') as fp:
+        json.dump(dic, fp)
+
+    return json_path
+
 def intensity_to_int(intensity): # Convert string to number for text-to-voice
     if intensity == "I":
         intensityNum = 1
@@ -78,19 +100,48 @@ def channel_to_axis(channel):
     elif "NE" in channel:
         return "East-West axis"# MEMS.
 
-def save_mseed(st, title, target_dir):
-    Path(target_dir).mkdir(parents=True, exist_ok=True)
-    mseed_path = os.path.join(target_dir, title +".mseed")
-    st.write(mseed_path, format="MSEED", reclen=512)
+def threadSound(): #thread for playing alert sound
+    for _ in range(1):
+        play(AudioSegment.from_mp3("alarm.mp3"))
+        play(AudioSegment.from_mp3("eq_intensity.mp3"))
+        play(AudioSegment.from_mp3("eq_displacement.mp3"))
+        time.sleep(1)
 
-    return mseed_path
+def threadDialog(intensity,displacement,channel, PGA, PGA_channel): # thread for displaying alert box
+    root = Tk()
+    root.withdraw()
+    mb.showwarning('! EARTHQUAKE ALERT !',
+                   ('Intensity: %s\nDisplacement: %.2f cm, '+channel+'\nAcceleration: %.2f cm/s2, '+PGA_channel) % (intensity,displacement,PGA),
+                   parent=root)
+    root.destroy()
 
-def save_json(dic, title, target_dir):
-    Path(target_dir).mkdir(parents=True, exist_ok=True)
-    json_path = os.path.join(target_dir, title +".json")
-    with open(json_path, 'w') as fp:
-        json.dump(dic, fp)
+def alarm(intensity, disp, channel, PGA, PGA_channel):
+    # Convert intensity string into number
+    intensityNum = intensity_to_int(intensity)
+    # create audio file for intensity
+    if intensity=="II-III":
+        myobj = gTTS(text="Attention! Earthquake detected at intensity two or three", lang="en", slow=False)
+    else:
+        myobj = gTTS(text="Attention! Earthquake detected at intensity %.0f" % intensityNum, lang="en", slow=False)
+    myobj.save("./eq_intensity.mp3")
+    # create audio file for displacement
+    myobj = gTTS(text=("Displacement is %.2f centimeters along "+channel_to_axis(channel) \
+                        +", and acceleration is %.2f centimeters per second-squared along "+channel_to_axis(PGA_channel)) % (disp, PGA), lang="en", slow=False)
+    myobj.save("./eq_displacement.mp3")
 
-    return json_path
+    # Create separate threads for alert sounds and dialog box
+    alertThread1 = threading.Thread(target=threadSound)
+    alertThread1.start()
+    #root = Tk()
+    #root.withdraw()
+    #mb.showwarning('! EARTHQUAKE ALERT !',
+    #               ('Intensity: %s\nDisplacement: %.2f cm, '+channel) % (intensity,displacement),
+    #               parent=root)
+    #root.destroy()
+    alertThread2 = threading.Thread(target=threadDialog, args=(intensity,disp,channel, PGA, PGA_channel))
+    alertThread2.start()
+
+    # alertThread1.join()
+    # alertThread2.join()
 
 
