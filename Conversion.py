@@ -5,6 +5,7 @@ from helpers import (
     g_to_intensity,
     intensity_to_int,
     save_mseed,
+    save_json,
 )
 from trace_conversion import (
     convert_counts_to_metric_trace,
@@ -167,47 +168,70 @@ class Conversion(threading.Thread):
                     max_pga = 0
                     max_intensity_int = 0
                     max_intensity_str = ""
-                    max_channel = "" # channel with max PGA
+                    max_pga_channel = "" # channel with max PGA
                     for acc_tr in acc_st:
                         if acc_tr.stats.peak > max_pga:
                             max_pga = acc_tr.stats.peak
                             max_intensity_str = g_to_intensity(max_pga/9.81)
                             max_intensity_int = intensity_to_int(max_intensity_str)
-                            max_channel = acc_tr.stats.channel
+                            max_pga_channel = acc_tr.stats.channel
 
-                    # check against thresh, and get PGD if thresh is reached
+                    ## check against thresh
                     if max_intensity_int >= self.intensity_threshold:
-                        if max_channel == "EHZ":
-                            vel_tr = metric_st.select(channel=max_channel)[0]
-                        else:
-                            acc_tr = acc_st.select(channel=max_channel)[0]
-                            vel_tr = convert_acc_to_vel_trace(acc_tr)
-                        dis_tr = convert_vel_to_dis_trace(vel_tr)
-                        peak_dis = max(abs(dis_tr.data))*100 #convert to centimeters
-
-                        # publish event summary
-                        evt_summary = {
-                                "PGA": max_pga,
-                                "PGD": peak_dis, # in centimeters
-                                "intensity": max_intensity_str,
-                                "channel": max_channel,
-                        }
-                        self.message_board.publish(self.dst_event_summary_topic, evt_summary)
-
-                        # convert the rest of the channels to disp
+                        # since threshold is reached, convert all to dis to get PGD
                         vel_st = self.convert_metric_to_vel(metric_st)
                         vel_st = self.set_stats_peak(vel_st)
                         dis_st = self.convert_vel_to_dis(vel_st)
                         dis_st = self.set_stats_peak(dis_st)
 
-                        # save data and publish event data
+                        # get PGD
+                        max_pgd = 0
+                        for dis_tr in acc_st:
+                            if dis_tr.stats.peak > max_pgd:
+                                max_pgd = dis_tr.stats.peak
+                                max_pgd_channel = dis_tr.stats.channel
+
+                        # publish event summary
+                        evt_summary = {
+                            "PGA": max_pga,
+                            "PGA_channel": max_pga_channel,
+                            "intensity": max_intensity_str,
+                            "PGD": max_pgd,
+                            "PGD_channel": max_pgd_channel,
+                        }
+                        self.message_board.publish(self.dst_event_summary_topic, evt_summary)
+
+                        ## create all event data
                         event_name = "_".join([self.network, self.station,
                             pick["on_time"].strftime("%y-%m-%dT%H:%M:%S")])
-                        dir_path = save_mseed(Stream(traces), event_name, "counts", self.captures_dir)
-                        dir_path = save_mseed(metric_st, event_name, "metric", self.captures_dir)
-                        dir_path = save_mseed(acc_st, event_name, "acc", self.captures_dir)
-                        dir_path = save_mseed(vel_st, event_name, "vel", self.captures_dir)
-                        dir_path = save_mseed(dis_st, event_name, "dis", self.captures_dir)
+                        parent_dir = os.path.join(os.getcwd(), self.captures_dir)
+                        dir_path = os.path.join(parent_dir, event_name)
 
+                        # create summary report
+                        report = {
+                            "Event name": event_name,
+                            "Detection time": str(pick["on_time"]),
+                            "PGA": max_pga,
+                            "PGA_channel": max_pga_channel,
+                            "intensity": max_intensity_str,
+                            "PGD": max_pgd,
+                            "PGD_channel": max_pgd_channel,
+                            "Channel Peak Accel's " + str([ch for ch in self.channels]): \
+                                [a.stats.peak for a in acc_st],
+                            "Channel Peak Velo's " + str([ch for ch in self.channels]): \
+                                [v.stats.peak for v in vel_st],
+                            "Channel Peak Disp's " + str([ch for ch in self.channels]): \
+                                [d.stats.peak for d in dis_st],
+                        }
+
+                        # write all to files
+                        _ = save_json(report, "event_summary.json", dir_path)
+                        _ = save_mseed(Stream(traces), "counts", dir_path)
+                        _ = save_mseed(metric_st, "metric", dir_path)
+                        _ = save_mseed(acc_st, "acc", dir_path)
+                        _ = save_mseed(vel_st, "vel", dir_path)
+                        _ = save_mseed(dis_st, "dis", dir_path)
+
+                        # publish location of all data
                         evt_data = {"path": dir_path}
                         self.message_board.publish(self.dst_event_data_topic, evt_data)

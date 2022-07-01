@@ -2,6 +2,7 @@ from obspy import read_inventory
 from obspy.clients.fdsn import Client as RS_Client
 from obspy.core.inventory import Inventory, Network
 from pathlib import Path
+import json
 import os
 
 def get_inventory(inv_dir, network, station, client_name="RASPISHAKE"):
@@ -77,13 +78,19 @@ def channel_to_axis(channel):
     elif "NE" in channel:
         return "East-West axis"# MEMS.
 
-def save_mseed(st, event_name, title, dir_name):
-    parent_dir = os.path.join(os.getcwd(), dir_name)
-    target_dir = os.path.join(parent_dir, event_name)
+def save_mseed(st, title, target_dir):
     Path(target_dir).mkdir(parents=True, exist_ok=True)
     mseed_path = os.path.join(target_dir, title +".mseed")
     st.write(mseed_path, format="MSEED", reclen=512)
 
-    return target_dir
+    return mseed_path
+
+def save_json(dic, title, target_dir):
+    Path(target_dir).mkdir(parents=True, exist_ok=True)
+    json_path = os.path.join(target_dir, title +".mseed")
+    with open(json_path, 'w') as fp:
+        json.dump(dic, fp)
+
+    return json_path
 
 
